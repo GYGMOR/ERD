@@ -1,24 +1,28 @@
 import { useState, useEffect } from 'react';
 import { Search, Users } from 'lucide-react';
+import { NewCustomerModal } from '../components/NewCustomerModal';
+import type { Company } from '../types/entities';
 
 export const CustomersView = () => {
-  const [customers, setCustomers] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+
+  const fetchCustomers = async () => {
+    try {
+      const res = await fetch('/api/companies');
+      const data = await res.json();
+      if (data.success) {
+        setCustomers(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching customers:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCustomers = async () => {
-      try {
-        const res = await fetch('/api/companies');
-        const data = await res.json();
-        if (data.success) {
-          setCustomers(data.data);
-        }
-      } catch (err) {
-        console.error('Error fetching customers:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchCustomers();
   }, []);
 
@@ -34,7 +38,7 @@ export const CustomersView = () => {
           <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
           <input type="text" placeholder="Kunde suchen..." style={{ padding: '8px 16px 8px 36px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', fontSize: '14px', width: '250px' }} />
         </div>
-        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => setShowModal(true)}>
           <Users size={16} /> Neuer Kunde
         </button>
       </div>
@@ -89,6 +93,16 @@ export const CustomersView = () => {
         </tbody>
       </table>
     </div>
+
+    {showModal && (
+      <NewCustomerModal 
+        onClose={() => setShowModal(false)} 
+        onSave={() => {
+          setShowModal(false);
+          fetchCustomers();
+        }} 
+      />
+    )}
   </div>
   );
 };

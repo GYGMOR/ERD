@@ -39,7 +39,7 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   const handleMicrosoftLogin = () => {
     instance.loginPopup(loginRequest).then(() => {
       onLogin();
-    }).catch((e: any) => {
+    }).catch((e: unknown) => {
       console.error(e);
     });
   };

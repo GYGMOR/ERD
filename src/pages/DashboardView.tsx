@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Ticket } from 'lucide-react';
 import { revData } from '../utils/dummyData';
+import type { ChartEntry } from '../types/entities';
 
 export const DashboardView = () => {
   const [metrics, setMetrics] = useState({
@@ -12,7 +13,7 @@ export const DashboardView = () => {
     satisfaction: 100
   });
   
-  const [ticketData, setTicketData] = useState<any[]>([]);
+  const [ticketData, setTicketData] = useState<ChartEntry[]>([]);
 
   useEffect(() => {
     const fetchMetrics = async () => {

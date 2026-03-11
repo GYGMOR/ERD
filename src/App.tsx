@@ -1,25 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
 import { CustomersView } from './pages/CustomersView';
 import { QuotesView } from './pages/QuotesView';
+import { SettingsView } from './pages/SettingsView';
 import { LoginView } from './pages/LoginView';
 import { GlobalLoginView } from './pages/GlobalLoginView';
+import { getUser, clearAuth } from './utils/auth';
 
 // Theme Toggle Component
 const ThemeToggle = () => {
-  const [isDark, setIsDark] = useState(false);
-
-  useEffect(() => {
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const [isDark, setIsDark] = useState(() => {
     const storedTheme = localStorage.getItem('theme');
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const useDark = storedTheme === 'dark' || (!storedTheme && systemPrefersDark);
-    
-    setIsDark(useDark);
+    // Apply on first render
     document.documentElement.setAttribute('data-theme', useDark ? 'dark' : 'light');
-  }, []);
+    return useDark;
+  });
 
   const toggleTheme = () => {
     const newTheme = !isDark;
@@ -36,7 +36,7 @@ const ThemeToggle = () => {
 };
 
 // Sidebar Item Component
-const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string, icon: any, label: string, isCollapsed: boolean }) => {
+const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string, icon: React.ElementType, label: string, isCollapsed: boolean }) => {
   const location = useLocation();
   const isActive = location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
   
@@ -114,7 +114,14 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: ()
 
 const App = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  // Persist auth state across page refreshes by checking localStorage
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+  const currentUser = getUser();
+
+  const handleLogout = () => {
+    clearAuth();
+    setIsAuthenticated(false);
+  };
 
   if (!isAuthenticated) {
     return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
@@ -126,7 +133,7 @@ const App = () => {
         <Route path="/login" element={<LoginView />} />
         <Route path="*" element={
           <div className="app-container">
-            <Sidebar isCollapsed={isSidebarCollapsed} onLogout={() => setIsAuthenticated(false)} />
+            <Sidebar isCollapsed={isSidebarCollapsed} onLogout={handleLogout} />
             
             <main className="main-content">
               <header className="topbar">
@@ -171,12 +178,12 @@ const App = () => {
                   <div style={{ width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 8px' }} />
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                    <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } } as any}>
-                      <p style={{ fontSize: '13px', fontWeight: 600 }}>Joel Hediger</p>
-                      <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Administrator</p>
+                    <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } } as React.CSSProperties}>
+                      <p style={{ fontSize: '13px', fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
+                      <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
                     </div>
                     <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '14px' }}>
-                      JH
+                      {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'JH'}
                     </div>
                   </div>
                 </div>
@@ -188,7 +195,7 @@ const App = () => {
                   <Route path="/tickets" element={<TicketsView />} />
                   <Route path="/customers" element={<CustomersView />} />
                   <Route path="/quotes" element={<QuotesView />} />
-                  <Route path="/settings" element={<div><h1 style={{ marginBottom: '24px', fontSize: '1.5rem', fontWeight: 600 }}>System Settings</h1></div>} />
+                  <Route path="/settings" element={<SettingsView />} />
                 </Routes>
               </div>
             </main>

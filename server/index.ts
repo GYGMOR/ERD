@@ -9,7 +9,7 @@ import jwt from 'jsonwebtoken';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = parseInt(process.env.PORT || '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
 
 // Middleware
@@ -22,11 +22,11 @@ const pool = new Pool({
 });
 
 // Test DB connection
-pool.query('SELECT NOW()', (err, res) => {
+pool.query('SELECT NOW()', (err: Error | null) => {
   if (err) {
     console.error('Error connecting to the database', err.stack);
   } else {
-    console.log('Connected to Database successfully at:', res.rows[0].now);
+    console.log('Connected to Database successfully.');
   }
 });
 
@@ -46,7 +46,7 @@ app.get('/api/test-db', async (req: express.Request, res: express.Response) => {
 });
 
 // Auth Route: Local Login
-app.post('/api/auth/login', async (req, res): Promise<any> => {
+app.post('/api/auth/login', async (req: express.Request, res: express.Response) => {
   const { email, password } = req.body;
   try {
     const userResult = await pool.query('SELECT * FROM users WHERE email = $1 AND is_active = true', [email]);
@@ -127,6 +127,24 @@ app.get('/api/companies', async (req: express.Request, res: express.Response) =>
   }
 });
 
+app.post('/api/companies', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, name, domain, industry, website, phone, street, city, postal_code, country, is_active } = req.body;
+  if (!tenant_id || !name) {
+    return res.status(400).json({ success: false, error: 'Tenant ID and Name are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO companies (tenant_id, name, domain, industry, website, phone, street, city, postal_code, country, is_active) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [tenant_id, name, domain, industry, website, phone, street, city, postal_code, country, is_active ?? true]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating company:', error);
+    res.status(500).json({ success: false, error: 'Server error creating company' });
+  }
+});
+
 app.get('/api/contacts', async (req: express.Request, res: express.Response) => {
   try {
     const result = await pool.query(`
@@ -159,6 +177,60 @@ app.get('/api/tickets', async (req: express.Request, res: express.Response) => {
   } catch (error) {
     console.error('Error fetching tickets:', error);
     res.status(500).json({ success: false, error: 'Server error fetching tickets' });
+  }
+});
+
+app.post('/api/tickets', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, title, description, status, priority, type, company_id, customer_id, assignee_id } = req.body;
+  
+  if (!tenant_id || !title) {
+    return res.status(400).json({ success: false, error: 'Tenant ID and Title are required' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO tickets (tenant_id, title, description, status, priority, type, company_id, customer_id, assignee_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [tenant_id, title, description, status || 'new', priority || 'medium', type || 'support', company_id, customer_id, assignee_id]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating ticket:', error);
+    res.status(500).json({ success: false, error: 'Server error creating ticket' });
+  }
+});
+
+// --- Invoice / Quotes Routes ---
+app.get('/api/invoices', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT i.*, c.name as company_name
+      FROM invoices i
+      LEFT JOIN companies c ON i.company_id = c.id
+      ORDER BY i.created_at DESC
+    `);
+    res.status(200).json({ success: true, count: result.rowCount, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching invoices:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching invoices' });
+  }
+});
+
+app.post('/api/invoices', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, company_id, title, amount, status, due_date } = req.body;
+  if (!tenant_id || !title) {
+    return res.status(400).json({ success: false, error: 'Tenant ID and Title are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO invoices (tenant_id, company_id, title, amount, status, due_date)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [tenant_id, company_id || null, title, amount || 0, status || 'draft', due_date]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating invoice:', error);
+    res.status(500).json({ success: false, error: 'Server error creating invoice' });
   }
 });
 

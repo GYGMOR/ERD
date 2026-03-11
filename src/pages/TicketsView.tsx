@@ -1,24 +1,28 @@
 import { useState, useEffect } from 'react';
-import { Ticket } from 'lucide-react';
+import { Ticket as TicketIcon } from 'lucide-react';
+import { NewTicketModal } from '../components/NewTicketModal';
+import type { Ticket } from '../types/entities';
 
 export const TicketsView = () => {
-  const [tickets, setTickets] = useState<any[]>([]);
+  const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+
+  const fetchTickets = async () => {
+    try {
+      const res = await fetch('/api/tickets');
+      const data = await res.json();
+      if (data.success) {
+        setTickets(data.data);
+      }
+    } catch (err) {
+      console.error('Error fetching tickets:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchTickets = async () => {
-      try {
-        const res = await fetch('/api/tickets');
-        const data = await res.json();
-        if (data.success) {
-          setTickets(data.data);
-        }
-      } catch (err) {
-        console.error('Error fetching tickets:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchTickets();
   }, []);
 
@@ -33,8 +37,8 @@ export const TicketsView = () => {
         <button className="btn-secondary" style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text-main)', fontWeight: 500 }}>
           Filter
         </button>
-        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Ticket size={16} /> Neues Ticket
+        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }} onClick={() => setShowModal(true)}>
+          <TicketIcon size={16} /> Neues Ticket
         </button>
       </div>
     </div>
@@ -84,6 +88,16 @@ export const TicketsView = () => {
         </tbody>
       </table>
     </div>
+    
+    {showModal && (
+      <NewTicketModal 
+        onClose={() => setShowModal(false)} 
+        onSave={() => {
+          setShowModal(false);
+          fetchTickets();
+        }} 
+      />
+    )}
   </div>
   );
 };
