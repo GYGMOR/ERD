@@ -6,6 +6,7 @@ import { TicketsView } from './pages/TicketsView';
 import { CustomersView } from './pages/CustomersView';
 import { QuotesView } from './pages/QuotesView';
 import { LoginView } from './pages/LoginView';
+import { GlobalLoginView } from './pages/GlobalLoginView';
 
 // Theme Toggle Component
 const ThemeToggle = () => {
@@ -63,7 +64,7 @@ const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string, icon: any
 };
 
 // Sidebar Navigation
-const Sidebar = ({ isCollapsed }: { isCollapsed: boolean }) => (
+const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: () => void }) => (
   <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
     <div style={{ padding: isCollapsed ? '24px 0' : '24px', fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start', gap: '8px', borderBottom: '1px solid var(--color-border)', height: 'var(--header-height)' }}>
       <div style={{width: 32, height: 32, minWidth: 32, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 16}}>
@@ -88,6 +89,7 @@ const Sidebar = ({ isCollapsed }: { isCollapsed: boolean }) => (
     <div style={{ padding: isCollapsed ? '24px 8px' : '24px 16px', borderTop: '1px solid var(--color-border)' }}>
       <NavItem to="/settings" icon={Settings} label="Settings" isCollapsed={isCollapsed} />
       <button 
+        onClick={onLogout}
         style={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -112,6 +114,11 @@ const Sidebar = ({ isCollapsed }: { isCollapsed: boolean }) => (
 
 const App = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  if (!isAuthenticated) {
+    return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
+  }
 
   return (
     <Router basename="/ERD">
@@ -119,7 +126,7 @@ const App = () => {
         <Route path="/login" element={<LoginView />} />
         <Route path="*" element={
           <div className="app-container">
-            <Sidebar isCollapsed={isSidebarCollapsed} />
+            <Sidebar isCollapsed={isSidebarCollapsed} onLogout={() => setIsAuthenticated(false)} />
             
             <main className="main-content">
               <header className="topbar">
