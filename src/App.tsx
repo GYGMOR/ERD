@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck } from 'lucide-react';
+import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
 import { TicketDetailView } from './pages/TicketDetailView';
 import { ContactsView } from './pages/ContactsView';
 import { CustomersView } from './pages/CustomersView';
 import { CustomerDetailView } from './pages/CustomerDetailView';
+import { ProjectsView } from './pages/ProjectsView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
 import { LoginView } from './pages/LoginView';
@@ -81,6 +82,7 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: ()
       
       <NavItem to="/" icon={Home} label="Dashboard" isCollapsed={isCollapsed} />
       <NavItem to="/tickets" icon={Ticket} label="Tickets" isCollapsed={isCollapsed} />
+      <NavItem to="/projects" icon={FolderOpen} label="Projekte" isCollapsed={isCollapsed} />
       
       {!isCollapsed && <p style={{fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600, paddingLeft: '8px', marginTop: '24px', marginBottom: '8px'}}>Sales & CRM</p>}
       {isCollapsed && <div style={{height: 1, backgroundColor: 'var(--color-border)', margin: '16px 8px'}} />}
@@ -198,6 +200,7 @@ const App = () => {
                   <Route path="/" element={<DashboardView />} />
                   <Route path="/tickets" element={<TicketsView />} />
                   <Route path="/tickets/:id" element={<TicketDetailView />} />
+                  <Route path="/projects" element={<ProjectsView />} />
                   <Route path="/customers" element={<CustomersView />} />
                   <Route path="/customers/:id" element={<CustomerDetailView />} />
                   <Route path="/contacts" element={<ContactsView />} />

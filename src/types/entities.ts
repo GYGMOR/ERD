@@ -53,6 +53,22 @@ export interface Invoice {
   updated_at: string;
 }
 
+export interface Project {
+  id: string;
+  tenant_id: string;
+  company_id: string | null;
+  company_name: string | null;
+  name: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  start_date: string | null;
+  end_date: string | null;
+  ticket_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Contact {
   id: string;
   tenant_id: string;

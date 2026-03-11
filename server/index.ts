@@ -311,6 +311,77 @@ app.post('/api/invoices', async (req: express.Request, res: express.Response) =>
   }
 });
 
+// --- Projects Routes ---
+app.get('/api/projects', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT p.*, c.name as company_name,
+        (SELECT COUNT(*) FROM tickets t WHERE t.company_id = p.company_id)::int as ticket_count
+      FROM projects p
+      LEFT JOIN companies c ON p.company_id = c.id
+      ORDER BY p.created_at DESC
+    `);
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching projects:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching projects' });
+  }
+});
+
+app.post('/api/projects', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, company_id, name, description, status, priority, start_date, end_date } = req.body;
+  if (!tenant_id || !name) {
+    return res.status(400).json({ success: false, error: 'Tenant ID and Name are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO projects (tenant_id, company_id, name, description, status, priority, start_date, end_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [tenant_id, company_id || null, name, description, status || 'planning', priority || 'medium', start_date || null, end_date || null]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating project:', error);
+    res.status(500).json({ success: false, error: 'Server error creating project' });
+  }
+});
+
+app.patch('/api/projects/:id', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { status, priority, name, description, end_date } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE projects SET
+        status = COALESCE($1, status),
+        priority = COALESCE($2, priority),
+        name = COALESCE($3, name),
+        description = COALESCE($4, description),
+        end_date = COALESCE($5, end_date),
+        updated_at = NOW()
+       WHERE id = $6 RETURNING *`,
+      [status, priority, name, description, end_date, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Project not found' });
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating project:', error);
+    res.status(500).json({ success: false, error: 'Server error updating project' });
+  }
+});
+
+// Improved dashboard with real invoice revenue
+app.get('/api/dashboard/revenue', async (req: express.Request, res: express.Response) => {
+  try {
+    const mtd = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status = 'paid' AND EXTRACT(MONTH FROM created_at) = EXTRACT(MONTH FROM NOW()) AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())`);
+    const ytd = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status = 'paid' AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())`);
+    const pending = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status IN ('sent', 'draft')`);
+    const overdue = await pool.query(`SELECT COUNT(*) as count FROM invoices WHERE status = 'overdue'`);
+    res.status(200).json({ success: true, data: { mtd: parseFloat(mtd.rows[0].revenue), ytd: parseFloat(ytd.rows[0].revenue), pending: parseFloat(pending.rows[0].revenue), overdue: parseInt(overdue.rows[0].count) } });
+  } catch {
+    res.status(500).json({ success: false, error: 'Error fetching revenue data' });
+  }
+});
+
 // Start server
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port} and accessible on the network`);
