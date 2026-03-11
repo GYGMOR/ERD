@@ -1,7 +1,28 @@
+import { useState, useEffect } from 'react';
 import { Search, Users } from 'lucide-react';
-import { dummyCustomers } from '../utils/dummyData';
 
-export const CustomersView = () => (
+export const CustomersView = () => {
+  const [customers, setCustomers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchCustomers = async () => {
+      try {
+        const res = await fetch('/api/companies');
+        const data = await res.json();
+        if (data.success) {
+          setCustomers(data.data);
+        }
+      } catch (err) {
+        console.error('Error fetching customers:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCustomers();
+  }, []);
+
+  return (
   <div style={{ maxWidth: 1200, margin: '0 auto' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
       <div>
@@ -31,8 +52,12 @@ export const CustomersView = () => (
           </tr>
         </thead>
         <tbody>
-          {dummyCustomers.map((customer, i) => (
-            <tr key={customer.id} style={{ borderBottom: i === dummyCustomers.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }} className="hover-bg-row">
+          {loading ? (
+            <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)' }}>Lade Kunden...</td></tr>
+          ) : customers.length === 0 ? (
+            <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine Kunden gefunden.</td></tr>
+          ) : customers.map((customer, i) => (
+            <tr key={customer.id} style={{ borderBottom: i === customers.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }} className="hover-bg-row">
               <td style={{ padding: '16px 24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '12px' }}>
@@ -40,21 +65,21 @@ export const CustomersView = () => (
                   </div>
                   <div>
                     <div style={{ fontWeight: 600 }}>{customer.name}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '2px' }}>{customer.id}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--color-text-muted)', marginTop: '2px' }}>CUS-{customer.id.substring(0, 5)}</div>
                   </div>
                 </div>
               </td>
               <td style={{ padding: '16px 24px' }}>
-                <div style={{ fontSize: '14px' }}>{customer.email}</div>
-                <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginTop: '2px' }}>{customer.phone}</div>
+                <div style={{ fontSize: '14px' }}>{customer.domain || 'Keine Domain'}</div>
+                <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginTop: '2px' }}>{customer.phone || 'Keine Telefonnummer'}</div>
               </td>
               <td style={{ padding: '16px 24px' }}>
-                <span className={'badge ' + (customer.status === 'Aktiv' ? 'success' : 'danger')}>
-                  {customer.status}
+                <span className={'badge ' + (customer.is_active ? 'success' : 'danger')}>
+                  {customer.is_active ? 'Aktiv' : 'Inaktiv'}
                 </span>
               </td>
               <td style={{ padding: '16px 24px', fontWeight: 500 }}>
-                 {customer.arr}
+                 -
               </td>
               <td style={{ padding: '16px 24px', textAlign: 'right' }}>
                 <button style={{ color: 'var(--color-primary)', fontWeight: 500, fontSize: '13px' }}>Details ansehen</button>
@@ -65,4 +90,5 @@ export const CustomersView = () => (
       </table>
     </div>
   </div>
-);
+  );
+};

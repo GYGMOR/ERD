@@ -2,8 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -88,7 +86,7 @@ app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Resp
     
     // Ticket status distribution for pie chart
     const ticketDistResult = await pool.query(`SELECT status, COUNT(*) as count FROM tickets GROUP BY status`);
-    const ticketData = ticketDistResult.rows.map((row: any) => {
+    const ticketData = ticketDistResult.rows.map((row: { status: string, count: string }) => {
       let color = 'var(--color-info)';
       let name = row.status;
       if (row.status === 'new') { color = 'var(--color-primary)'; name = 'Neu'; }
@@ -115,6 +113,52 @@ app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Resp
   } catch (error) {
     console.error('Dashboard error:', error);
     res.status(500).json({ success: false, error: 'Server error loading dashboard metrics' });
+  }
+});
+
+// --- CRM Routes ---
+app.get('/api/companies', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query('SELECT * FROM companies ORDER BY created_at DESC');
+    res.status(200).json({ success: true, count: result.rowCount, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching companies:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching companies' });
+  }
+});
+
+app.get('/api/contacts', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT c.*, comp.name as company_name 
+      FROM contacts c 
+      LEFT JOIN companies comp ON c.company_id = comp.id 
+      ORDER BY c.created_at DESC
+    `);
+    res.status(200).json({ success: true, count: result.rowCount, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching contacts:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching contacts' });
+  }
+});
+
+// --- Ticket Routes ---
+app.get('/api/tickets', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT t.*, u.first_name as customer_first_name, u.last_name as customer_last_name,
+             a.first_name as assignee_first_name, a.last_name as assignee_last_name,
+             c.name as company_name
+      FROM tickets t
+      LEFT JOIN users u ON t.customer_id = u.id
+      LEFT JOIN users a ON t.assignee_id = a.id
+      LEFT JOIN companies c ON t.company_id = c.id
+      ORDER BY t.created_at DESC
+    `);
+    res.status(200).json({ success: true, count: result.rowCount, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching tickets:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching tickets' });
   }
 });
 
