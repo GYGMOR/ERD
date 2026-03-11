@@ -7,12 +7,33 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  const [errorMsg, setErrorMsg] = useState('');
+
   const { instance } = useMsal();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate login for now
-    onLogin();
+    setErrorMsg('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+      if (data.success) {
+        localStorage.setItem('token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        onLogin();
+      } else {
+        setErrorMsg(data.error || 'Login fehlgeschlagen');
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMsg('Serververbindung fehlgeschlagen');
+    }
   };
 
   const handleMicrosoftLogin = () => {
@@ -56,6 +77,11 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
           <div style={{ marginBottom: '40px' }}>
             <h2 style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '8px' }}>Willkommen zurück</h2>
             <p style={{ color: 'var(--color-text-muted)' }}>Bitte melde dich mit deinen Zugangsdaten an.</p>
+            {errorMsg && (
+              <div style={{ padding: '12px', marginTop: '16px', backgroundColor: 'var(--color-danger)', color: 'white', borderRadius: 'var(--radius-md)', fontSize: '14px', fontWeight: 500 }}>
+                {errorMsg}
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>

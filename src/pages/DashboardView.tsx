@@ -1,8 +1,36 @@
+import { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Ticket } from 'lucide-react';
-import { revData, ticketData } from '../utils/dummyData';
+import { revData } from '../utils/dummyData';
 
-export const DashboardView = () => (
+export const DashboardView = () => {
+  const [metrics, setMetrics] = useState({
+    openTickets: 0,
+    criticalTickets: 0,
+    revenueMtd: 0,
+    activeProjects: 0,
+    satisfaction: 100
+  });
+  
+  const [ticketData, setTicketData] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchMetrics = async () => {
+      try {
+        const response = await fetch('/api/dashboard/metrics');
+        const data = await response.json();
+        if (data.success) {
+          setMetrics(data.metrics);
+          setTicketData(data.charts.ticketData);
+        }
+      } catch (error) {
+        console.error('Failed to fetch metrics', error);
+      }
+    };
+    fetchMetrics();
+  }, []);
+
+  return (
   <div style={{ maxWidth: 1200, margin: '0 auto' }}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
       <div>
@@ -19,27 +47,27 @@ export const DashboardView = () => (
       <div className="card" style={{ borderTop: '4px solid var(--color-warning)' }}>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', fontWeight: 600, textTransform: 'uppercase' }}>Offene Tickets</p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginTop: '8px' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>24</h2>
-          <span className="badge danger">5 Kritisch</span>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>{metrics.openTickets}</h2>
+          {metrics.criticalTickets > 0 && <span className="badge danger">{metrics.criticalTickets} Kritisch</span>}
         </div>
       </div>
       <div className="card" style={{ borderTop: '4px solid var(--color-success)' }}>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', fontWeight: 600, textTransform: 'uppercase' }}>Umsatz (MTD)</p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginTop: '8px' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>CHF 42k</h2>
-          <span className="badge success">+12%</span>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>CHF {(metrics.revenueMtd / 1000).toFixed(1)}k</h2>
+          <span className="badge success">+0%</span>
         </div>
       </div>
       <div className="card" style={{ borderTop: '4px solid var(--color-primary)' }}>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', fontWeight: 600, textTransform: 'uppercase' }}>Aktive Projekte</p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginTop: '8px' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>8</h2>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>{metrics.activeProjects}</h2>
         </div>
       </div>
       <div className="card" style={{ borderTop: '4px solid var(--color-info)' }}>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '13px', fontWeight: 600, textTransform: 'uppercase' }}>Zufriedenheit</p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginTop: '8px' }}>
-          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>98%</h2>
+          <h2 style={{ fontSize: '2.5rem', fontWeight: 700, lineHeight: 1 }}>{metrics.satisfaction}%</h2>
         </div>
       </div>
     </div>
@@ -107,4 +135,5 @@ export const DashboardView = () => (
       </div>
     </div>
   </div>
-);
+  );
+};
