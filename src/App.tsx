@@ -6,6 +6,7 @@ import { TicketsView } from './pages/TicketsView';
 import { TicketDetailView } from './pages/TicketDetailView';
 import { ContactsView } from './pages/ContactsView';
 import { CustomersView } from './pages/CustomersView';
+import { CustomerDetailView } from './pages/CustomerDetailView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
 import { LoginView } from './pages/LoginView';
@@ -198,6 +199,7 @@ const App = () => {
                   <Route path="/tickets" element={<TicketsView />} />
                   <Route path="/tickets/:id" element={<TicketDetailView />} />
                   <Route path="/customers" element={<CustomersView />} />
+                  <Route path="/customers/:id" element={<CustomerDetailView />} />
                   <Route path="/contacts" element={<ContactsView />} />
                   <Route path="/quotes" element={<QuotesView />} />
                   <Route path="/settings" element={<SettingsView />} />

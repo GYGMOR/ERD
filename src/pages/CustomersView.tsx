@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { Search, Users } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { NewCustomerModal } from '../components/NewCustomerModal';
 import type { Company } from '../types/entities';
 
 export const CustomersView = () => {
+  const navigate = useNavigate();
   const [customers, setCustomers] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -61,7 +63,10 @@ export const CustomersView = () => {
           ) : customers.length === 0 ? (
             <tr><td colSpan={5} style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine Kunden gefunden.</td></tr>
           ) : customers.map((customer, i) => (
-            <tr key={customer.id} style={{ borderBottom: i === customers.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }} className="hover-bg-row">
+            <tr key={customer.id}
+              onClick={() => navigate(`/customers/${customer.id}`)}
+              style={{ borderBottom: i === customers.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }}
+              className="hover-bg-row">
               <td style={{ padding: '16px 24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                   <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '12px' }}>
