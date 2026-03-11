@@ -180,7 +180,7 @@ const DashboardView = () => (
               </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
               <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 12}} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 12}} tickFormatter={(val) => \`\${val/1000}k\`} />
+              <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 12}} tickFormatter={(val) => (val/1000) + 'k'} />
               <Tooltip 
                 contentStyle={{ backgroundColor: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-md)' }}
                 itemStyle={{ color: 'var(--color-text-main)', fontWeight: 600 }}
@@ -207,7 +207,7 @@ const DashboardView = () => (
                 stroke="none"
               >
                 {ticketData.map((entry, index) => (
-                  <Cell key={\`cell-\${index}\`} fill={entry.color} />
+                  <Cell key={'cell-' + index} fill={entry.color} />
                 ))}
               </Pie>
               <Tooltip 
