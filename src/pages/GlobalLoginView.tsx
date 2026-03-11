@@ -1,9 +1,13 @@
 import { useState } from 'react';
 import { Mail, KeyRound } from 'lucide-react';
+import { useMsal } from '@azure/msal-react';
+import { loginRequest } from '../auth/msalConfig';
 
 export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+
+  const { instance } = useMsal();
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -12,8 +16,11 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   };
 
   const handleMicrosoftLogin = () => {
-    // Simulate Microsoft MSAL login
-    onLogin();
+    instance.loginPopup(loginRequest).then(() => {
+      onLogin();
+    }).catch((e: any) => {
+      console.error(e);
+    });
   };
 
   return (
