@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen, ShieldCheck, AlertTriangle, X } from 'lucide-react';
+import {
+  Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft,
+  Bell, Search, AlertTriangle, X, FolderOpen, UserCheck, ShieldCheck,
+  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard,
+} from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
 import { TicketDetailView } from './pages/TicketDetailView';
@@ -13,78 +17,74 @@ import { SettingsView } from './pages/SettingsView';
 import { UsersView } from './pages/UsersView';
 import { LoginView } from './pages/LoginView';
 import { GlobalLoginView } from './pages/GlobalLoginView';
-import { getUser, clearAuth } from './utils/auth';
+import { getUser, clearAuth, hasRole, isInternal } from './utils/auth';
+import type { UserRole } from './types/entities';
 
-// Theme Toggle Component
+// ─── Theme Toggle ─────────────────────────────────────────────────────────────
 const ThemeToggle = () => {
   const [isDark, setIsDark] = useState(() => {
-    const storedTheme = localStorage.getItem('theme');
-    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const useDark = storedTheme === 'dark' || (!storedTheme && systemPrefersDark);
-    // Apply on first render
+    const stored = localStorage.getItem('theme');
+    const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const useDark = stored === 'dark' || (!stored && systemDark);
     document.documentElement.setAttribute('data-theme', useDark ? 'dark' : 'light');
     return useDark;
   });
 
-  const toggleTheme = () => {
-    const newTheme = !isDark;
-    setIsDark(newTheme);
-    document.documentElement.setAttribute('data-theme', newTheme ? 'dark' : 'light');
-    localStorage.setItem('theme', newTheme ? 'dark' : 'light');
+  const toggle = () => {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.setAttribute('data-theme', next ? 'dark' : 'light');
+    localStorage.setItem('theme', next ? 'dark' : 'light');
   };
 
   return (
-    <button onClick={toggleTheme} className="theme-toggle" aria-label="Toggle theme" style={{color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%'}}>
-      {isDark ? <Sun size={20} /> : <Moon size={20} />}
+    <button onClick={toggle} aria-label="Toggle theme" style={{ color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%' }}>
+      {isDark ? <Sun size={17} /> : <Moon size={17} />}
     </button>
   );
 };
 
 // ─── Notification Bell ────────────────────────────────────────────────────────
 interface Notif { id: string; type: string; title: string; body: string; created_at: string }
-const TYPE_COLOR: Record<string, string> = { danger: 'var(--color-danger)', warning: 'var(--color-warning)', info: 'var(--color-info)' };
+const TYPE_CLR: Record<string, string> = { danger: 'var(--color-danger)', warning: 'var(--color-warning)', info: 'var(--color-info)' };
 
 const NotificationBell = () => {
   const [open, setOpen] = useState(false);
   const [notifs, setNotifs] = useState<Notif[]>([]);
-  const bellRef = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
 
+  useEffect(() => { fetch('/api/notifications').then(r => r.json()).then(d => { if (d.success) setNotifs(d.data); }).catch(() => {}); }, []);
   useEffect(() => {
-    fetch('/api/notifications').then(r => r.json()).then(d => { if (d.success) setNotifs(d.data); }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => { if (bellRef.current && !bellRef.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h);
   }, []);
 
   return (
-    <div ref={bellRef} style={{ position: 'relative' }}>
-      <button onClick={() => setOpen(o => !o)} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: open ? 'var(--color-primary)' : 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.15s' }}>
-        <Bell size={20} />
-        {notifs.length > 0 && <span style={{ position: 'absolute', top: 8, right: 8, width: 8, height: 8, backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-surface)' }} />}
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{ position:'relative', display:'flex', alignItems:'center', justifyContent:'center', width:32, height:32, borderRadius:'50%', color: open ? 'var(--color-primary)' : 'var(--color-text-muted)', background:'none', border:'none', cursor:'pointer', transition:'color 0.15s' }}>
+        <Bell size={17} />
+        {notifs.length > 0 && <span style={{ position:'absolute', top:5, right:5, width:7, height:7, backgroundColor:'var(--color-danger)', borderRadius:'50%', border:'2px solid var(--color-surface)' }} />}
       </button>
       {open && (
-        <div style={{ position: 'absolute', right: 0, top: 48, width: 380, maxHeight: 480, overflowY: 'auto', backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', zIndex: 200 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--color-border)' }}>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>Benachrichtigungen</span>
-            <span style={{ fontSize: 12, fontWeight: 600, backgroundColor: notifs.length > 0 ? 'var(--color-danger)' : 'var(--color-border)', color: notifs.length > 0 ? 'white' : 'var(--color-text-muted)', borderRadius: 10, padding: '2px 8px' }}>{notifs.length}</span>
+        <div style={{ position:'absolute', right:0, top:40, width:360, maxHeight:440, overflowY:'auto', backgroundColor:'var(--color-surface)', border:'1px solid var(--color-border)', borderRadius:'var(--radius-lg)', boxShadow:'var(--shadow-lg)', zIndex:200 }}>
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px', borderBottom:'1px solid var(--color-border)' }}>
+            <span style={{ fontWeight:700, fontSize:13 }}>Benachrichtigungen</span>
+            <span style={{ fontSize:11, fontWeight:600, backgroundColor: notifs.length > 0 ? 'var(--color-danger)' : 'var(--color-border)', color: notifs.length > 0 ? 'white' : 'var(--color-text-muted)', borderRadius:10, padding:'1px 7px' }}>{notifs.length}</span>
           </div>
           {notifs.length === 0 ? (
-            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 14 }}>Keine Benachrichtigungen ✓</div>
+            <div style={{ padding:'24px 16px', textAlign:'center', color:'var(--color-text-muted)', fontSize:13 }}>Keine Benachrichtigungen ✓</div>
           ) : notifs.map(n => (
-            <div key={n.id} style={{ display: 'flex', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--color-border)', transition: 'background 0.1s' }} className="hover-bg-row">
-              <div style={{ flexShrink: 0, marginTop: 2, color: TYPE_COLOR[n.type] || 'var(--color-info)' }}><AlertTriangle size={16} /></div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: TYPE_COLOR[n.type] || 'var(--color-text-main)' }}>{n.title}</div>
-                <div style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.body}</div>
+            <div key={n.id} style={{ display:'flex', gap:10, padding:'10px 16px', borderBottom:'1px solid var(--color-border)' }}>
+              <div style={{ flexShrink:0, marginTop:2, color: TYPE_CLR[n.type] || 'var(--color-info)' }}><AlertTriangle size={14} /></div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontWeight:600, fontSize:12, color: TYPE_CLR[n.type] || 'var(--color-text-main)' }}>{n.title}</div>
+                <div style={{ fontSize:12, color:'var(--color-text-muted)', marginTop:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{n.body}</div>
               </div>
             </div>
           ))}
-          <div style={{ padding: '10px 20px', textAlign: 'center' }}>
-            <button onClick={() => setOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
-              <X size={13} /> Schliessen
+          <div style={{ padding:'8px 16px', textAlign:'center' }}>
+            <button onClick={() => setOpen(false)} style={{ display:'inline-flex', alignItems:'center', gap:4, fontSize:12, color:'var(--color-text-muted)', background:'none', border:'none', cursor:'pointer' }}>
+              <X size={12} /> Schliessen
             </button>
           </div>
         </div>
@@ -93,96 +93,143 @@ const NotificationBell = () => {
   );
 };
 
-// Sidebar Item Component
-const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string, icon: React.ElementType, label: string, isCollapsed: boolean }) => {
+// ─── Sidebar NavItem ──────────────────────────────────────────────────────────
+const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string; icon: React.ElementType; label: string; isCollapsed: boolean }) => {
   const location = useLocation();
   const isActive = location.pathname === to || (to !== '/' && location.pathname.startsWith(to));
-  
   return (
-    <Link 
-      to={to} 
-      style={{ 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '12px', 
-        padding: '10px 12px', 
-        borderRadius: 'var(--radius-md)', 
-        color: isActive ? 'var(--color-primary)' : 'var(--color-text-main)', 
-        fontWeight: 500,
-        backgroundColor: isActive ? 'rgba(0, 82, 204, 0.05)' : 'transparent',
+    <Link
+      to={to}
+      style={{
+        display: 'flex', alignItems: 'center', gap: '8px',
+        padding: isCollapsed ? '7px' : '7px 10px',
+        borderRadius: 'var(--radius-md)',
+        color: isActive ? 'var(--color-primary)' : 'var(--color-text-main)',
+        fontWeight: isActive ? 600 : 500,
+        fontSize: '13px',
+        backgroundColor: isActive ? 'rgba(0, 82, 204, 0.06)' : 'transparent',
         transition: 'all var(--transition-fast)',
-        justifyContent: isCollapsed ? 'center' : 'flex-start'
+        justifyContent: isCollapsed ? 'center' : 'flex-start',
       }}
       title={isCollapsed ? label : undefined}
     >
-      <Icon size={20} />
+      <Icon size={17} />
       {!isCollapsed && <span>{label}</span>}
     </Link>
   );
 };
 
-// Sidebar Navigation
-const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: () => void }) => (
-  <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
-    <div style={{ padding: isCollapsed ? '24px 0' : '24px', fontSize: '1.25rem', fontWeight: 700, color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start', gap: '8px', borderBottom: '1px solid var(--color-border)', height: 'var(--header-height)' }}>
-      <div style={{width: 32, height: 32, minWidth: 32, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 16}}>
-        N
+// ─── Sidebar Group Label ──────────────────────────────────────────────────────
+const GroupLabel = ({ label, isCollapsed }: { label: string; isCollapsed: boolean }) =>
+  isCollapsed
+    ? <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: '8px 6px' }} />
+    : <p className="sidebar-group-label">{label}</p>;
+
+// ─── Navigation Structure ─────────────────────────────────────────────────────
+interface NavEntry { to: string; icon: React.ElementType; label: string; roles?: UserRole[] }
+interface NavGroup { label: string; items: NavEntry[] }
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: 'Service Hub',
+    items: [
+      { to: '/', icon: Home, label: 'Dashboard' },
+      { to: '/tickets', icon: Ticket, label: 'Tickets' },
+      { to: '/projects', icon: FolderOpen, label: 'Projekte', roles: ['admin', 'manager', 'employee'] },
+      { to: '/knowledge', icon: BookOpen, label: 'Knowledge Base' },
+    ],
+  },
+  {
+    label: 'Sales & CRM',
+    items: [
+      { to: '/customers', icon: Users, label: 'Kunden', roles: ['admin', 'manager', 'employee'] },
+      { to: '/contacts', icon: UserCheck, label: 'Kontakte', roles: ['admin', 'manager', 'employee'] },
+      { to: '/leads', icon: Target, label: 'Akquise', roles: ['admin', 'manager', 'employee'] },
+      { to: '/quotes', icon: FileText, label: 'Offerten', roles: ['admin', 'manager', 'employee'] },
+      { to: '/contracts', icon: FileSignature, label: 'Verträge', roles: ['admin', 'manager', 'employee'] },
+      { to: '/products', icon: Package, label: 'Produkte', roles: ['admin', 'manager', 'employee'] },
+      { to: '/newsletter', icon: Mail, label: 'Newsletter', roles: ['admin', 'manager', 'employee'] },
+    ],
+  },
+  {
+    label: 'Finance',
+    items: [
+      { to: '/accounting', icon: Calculator, label: 'Buchhaltung', roles: ['admin', 'manager'] },
+    ],
+  },
+  {
+    label: 'Intern',
+    items: [
+      { to: '/business-card', icon: CreditCard, label: 'Visitenkarte', roles: ['admin', 'manager', 'employee'] },
+      { to: '/users', icon: ShieldCheck, label: 'Benutzer', roles: ['admin', 'manager'] },
+      { to: '/settings', icon: Settings, label: 'Einstellungen' },
+    ],
+  },
+];
+
+// ─── Sidebar Component ────────────────────────────────────────────────────────
+const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean; onLogout: () => void }) => {
+  const userRole = (getUser()?.role || 'customer') as UserRole;
+
+  return (
+    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+      {/* Brand */}
+      <div style={{ padding: isCollapsed ? '12px 0' : '12px 14px', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start', gap: 8, borderBottom: '1px solid var(--color-border)', height: 'var(--header-height)', minHeight: 'var(--header-height)' }}>
+        <div style={{ width: 28, height: 28, minWidth: 28, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 14, fontWeight: 700 }}>N</div>
+        {!isCollapsed && <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--color-primary)' }}>NexService</span>}
       </div>
-      {!isCollapsed && <span>NexService</span>}
-    </div>
-    
-    <nav style={{ padding: isCollapsed ? '24px 8px' : '24px 16px', flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-      {!isCollapsed && <p style={{fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600, paddingLeft: '8px', marginBottom: '8px'}}>Service Hub</p>}
-      
-      <NavItem to="/" icon={Home} label="Dashboard" isCollapsed={isCollapsed} />
-      <NavItem to="/tickets" icon={Ticket} label="Tickets" isCollapsed={isCollapsed} />
-      <NavItem to="/projects" icon={FolderOpen} label="Projekte" isCollapsed={isCollapsed} />
-      
-      {!isCollapsed && <p style={{fontSize: '11px', textTransform: 'uppercase', color: 'var(--color-text-muted)', fontWeight: 600, paddingLeft: '8px', marginTop: '24px', marginBottom: '8px'}}>Sales & CRM</p>}
-      {isCollapsed && <div style={{height: 1, backgroundColor: 'var(--color-border)', margin: '16px 8px'}} />}
-      
-      <NavItem to="/customers" icon={Users} label="Kunden" isCollapsed={isCollapsed} />
-      <NavItem to="/contacts" icon={UserCheck} label="Kontakte" isCollapsed={isCollapsed} />
-      <NavItem to="/quotes" icon={FileText} label="Offerten" isCollapsed={isCollapsed} />
-    </nav>
-    
-    <div style={{ padding: isCollapsed ? '24px 8px' : '24px 16px', borderTop: '1px solid var(--color-border)' }}>
-      <NavItem to="/settings" icon={Settings} label="Einstellungen" isCollapsed={isCollapsed} />
-      <NavItem to="/users" icon={ShieldCheck} label="Benutzer" isCollapsed={isCollapsed} />
-      <button 
-        onClick={onLogout}
-        style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: isCollapsed ? 'center' : 'flex-start',
-          gap: '12px', 
-          padding: '10px 12px', 
-          borderRadius: 'var(--radius-md)', 
-          color: 'var(--color-danger)', 
-          fontWeight: 500, 
-          width: '100%', 
-          marginTop: '4px',
-          transition: 'all var(--transition-fast)'
-        }}
-        title={isCollapsed ? "Logout" : undefined}
-      >
-        <LogOut size={20} />
-        {!isCollapsed && <span>Logout</span>}
-      </button>
-    </div>
-  </aside>
+
+      {/* Navigation */}
+      <nav style={{ padding: isCollapsed ? '8px 6px' : '8px 10px', flex: 1, display: 'flex', flexDirection: 'column', gap: '1px' }}>
+        {NAV_GROUPS.map(group => {
+          const visibleItems = group.items.filter(item => !item.roles || item.roles.includes(userRole));
+          if (visibleItems.length === 0) return null;
+          return (
+            <div key={group.label}>
+              <GroupLabel label={group.label} isCollapsed={isCollapsed} />
+              {visibleItems.map(item => (
+                <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} isCollapsed={isCollapsed} />
+              ))}
+            </div>
+          );
+        })}
+      </nav>
+
+      {/* Bottom */}
+      <div style={{ padding: isCollapsed ? '8px 6px' : '8px 10px', borderTop: '1px solid var(--color-border)' }}>
+        <button
+          onClick={onLogout}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start',
+            gap: 8, padding: '7px 10px', borderRadius: 'var(--radius-md)',
+            color: 'var(--color-danger)', fontWeight: 500, fontSize: 13, width: '100%',
+          }}
+          title={isCollapsed ? 'Logout' : undefined}
+        >
+          <LogOut size={17} />
+          {!isCollapsed && <span>Logout</span>}
+        </button>
+      </div>
+    </aside>
+  );
+};
+
+// ─── Placeholder View (for modules not yet built) ─────────────────────────────
+const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.ElementType }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 12, color: 'var(--color-text-muted)' }}>
+    <Icon size={40} strokeWidth={1.5} />
+    <h2 style={{ fontSize: 18, fontWeight: 600 }}>{title}</h2>
+    <p style={{ fontSize: 13 }}>Dieses Modul wird in Batch B/C implementiert.</p>
+  </div>
 );
 
+// ─── Main App ─────────────────────────────────────────────────────────────────
 const App = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  // Persist auth state across page refreshes by checking localStorage
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const currentUser = getUser();
 
-  const handleLogout = () => {
-    clearAuth();
-    setIsAuthenticated(false);
-  };
+  const handleLogout = () => { clearAuth(); setIsAuthenticated(false); };
 
   if (!isAuthenticated) {
     return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
@@ -195,69 +242,73 @@ const App = () => {
         <Route path="*" element={
           <div className="app-container">
             <Sidebar isCollapsed={isSidebarCollapsed} onLogout={handleLogout} />
-            
+
             <main className="main-content">
               <header className="topbar">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                  <button 
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <button
                     onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)', transition: 'background-color var(--transition-fast)' }}
-                    className="hover-bg"
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
                     aria-label="Toggle Sidebar"
                   >
-                    {isSidebarCollapsed ? <Menu size={20} /> : <ChevronLeft size={20} />}
+                    {isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
                   </button>
-                  
                   <div style={{ position: 'relative' }}>
-                    <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-                    <input 
-                      type="text" 
-                      placeholder="Suche nach Ticket, Kunde, Projekt..." 
-                      style={{ 
-                        padding: '10px 16px 10px 44px', 
-                        borderRadius: 'var(--radius-pill)', 
-                        border: '1px solid var(--color-border)', 
-                        backgroundColor: 'var(--color-surface-hover)', 
-                        color: 'var(--color-text-main)', 
-                        width: '360px', 
-                        outline: 'none',
-                        fontSize: '14px',
-                        transition: 'all var(--transition-fast)'
-                      }} 
+                    <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+                    <input
+                      type="text"
+                      placeholder="Suche..."
+                      style={{
+                        padding: '6px 12px 6px 34px', borderRadius: 'var(--radius-pill)',
+                        border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)',
+                        color: 'var(--color-text-main)', width: 280, outline: 'none', fontSize: 13,
+                      }}
                     />
                   </div>
                 </div>
-                
-                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <ThemeToggle />
                   <NotificationBell />
-                  
-                  <div style={{ width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 8px' }} />
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                    <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } } as React.CSSProperties}>
-                      <p style={{ fontSize: '13px', fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
-                      <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
+                  <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <div style={{ textAlign: 'right' }}>
+                      <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
+                      <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
                     </div>
-                    <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '14px' }}>
-                      {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'JH'}
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 12 }}>
+                      {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
                     </div>
                   </div>
                 </div>
               </header>
-              
+
               <div className="content-area">
                 <Routes>
+                  {/* Service Hub */}
                   <Route path="/" element={<DashboardView />} />
                   <Route path="/tickets" element={<TicketsView />} />
                   <Route path="/tickets/:id" element={<TicketDetailView />} />
-                  <Route path="/projects" element={<ProjectsView />} />
+                  <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+                  <Route path="/knowledge" element={<Placeholder title="Knowledge Base" icon={BookOpen} />} />
+
+                  {/* Sales & CRM */}
                   <Route path="/customers" element={<CustomersView />} />
                   <Route path="/customers/:id" element={<CustomerDetailView />} />
                   <Route path="/contacts" element={<ContactsView />} />
+                  <Route path="/leads" element={<Placeholder title="Akquise / Leads" icon={Target} />} />
                   <Route path="/quotes" element={<QuotesView />} />
+                  <Route path="/contracts" element={<Placeholder title="Verträge" icon={FileSignature} />} />
+                  <Route path="/products" element={<Placeholder title="Produkte" icon={Package} />} />
+                  <Route path="/newsletter" element={<Placeholder title="Newsletter" icon={Mail} />} />
+
+                  {/* Finance */}
+                  <Route path="/accounting" element={hasRole('admin', 'manager') ? <Placeholder title="Buchhaltung" icon={Calculator} /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+
+                  {/* Intern */}
+                  <Route path="/business-card" element={isInternal() ? <Placeholder title="Visitenkarte" icon={CreditCard} /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
+                  <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />
                   <Route path="/settings" element={<SettingsView />} />
-                  <Route path="/users" element={<UsersView />} />
                 </Routes>
               </div>
             </main>
