@@ -304,6 +304,101 @@ const CustomersView = () => (
   </div>
 );
 
+// Dummy Data for Quotes
+const dummyQuotes = [
+  { id: 'Q-2041', customer: 'Acme Corporation', title: 'Server Upgrade Q3', amount: 'CHF 12,400', status: 'Gesendet', date: '11.03.2026', validUntil: '11.04.2026' },
+  { id: 'Q-2040', customer: 'Wayne Enterprises', title: 'Security Audit & Penetration Test', amount: 'CHF 8,900', status: 'Akzeptiert', date: '08.03.2026', validUntil: '08.04.2026' },
+  { id: 'Q-2039', customer: 'Globex Inc', title: 'Neue SLA Vereinbarung', amount: 'CHF 1,200', status: 'Entwurf', date: '10.03.2026', validUntil: '10.04.2026' },
+  { id: 'Q-2038', customer: 'Stark Industries', title: 'Cloud Migration AWS', amount: 'CHF 45,000', status: 'Abgelehnt', date: '01.03.2026', validUntil: '01.04.2026' },
+];
+
+const QuotesView = () => (
+  <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px' }}>
+      <div>
+        <h1 style={{ fontSize: '1.75rem', fontWeight: 600, letterSpacing: '-0.02em' }}>Offerten & Angebote</h1>
+        <p style={{ color: 'var(--color-text-muted)', marginTop: '4px' }}>Verwalte alle ausgehenden Angebote und deren Akzeptanz-Status.</p>
+      </div>
+      <div style={{ display: 'flex', gap: '12px' }}>
+        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <FileText size={16} /> Neue Offerte
+        </button>
+      </div>
+    </div>
+
+    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        <thead>
+          <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
+            <th style={{ padding: '16px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>Offerten-Nr.</th>
+            <th style={{ padding: '16px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>Kunde & Betreff</th>
+            <th style={{ padding: '16px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>Betrag</th>
+            <th style={{ padding: '16px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>Status</th>
+            <th style={{ padding: '16px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: '13px', textTransform: 'uppercase' }}>Ablaufdatum</th>
+          </tr>
+        </thead>
+        <tbody>
+          {dummyQuotes.map((quote, i) => (
+            <tr key={quote.id} style={{ borderBottom: i === dummyQuotes.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }} className="hover-bg-row">
+              <td style={{ padding: '16px 24px', fontWeight: 500, color: 'var(--color-primary)' }}>{quote.id}</td>
+              <td style={{ padding: '16px 24px' }}>
+                <div style={{ fontWeight: 500 }}>{quote.customer}</div>
+                <div style={{ fontSize: '13px', color: 'var(--color-text-muted)', marginTop: '2px' }}>{quote.title}</div>
+              </td>
+              <td style={{ padding: '16px 24px', fontWeight: 600 }}>{quote.amount}</td>
+              <td style={{ padding: '16px 24px' }}>
+                <span className={'badge ' + (quote.status === 'Akzeptiert' ? 'success' : quote.status === 'Gesendet' ? 'info' : quote.status === 'Abgelehnt' ? 'danger' : 'warning')}>
+                  {quote.status}
+                </span>
+              </td>
+              <td style={{ padding: '16px 24px', color: 'var(--color-text-muted)', fontSize: '13px' }}>{quote.validUntil}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
+// Login Screen / Customer Portal Gate
+const LoginView = () => (
+  <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--color-background)', position: 'absolute', top: 0, left: 0, zIndex: 100 }}>
+    <div className="card" style={{ width: 400, padding: '40px' }}>
+      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+        <div style={{ width: 48, height: 48, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-lg)', margin: '0 auto 16px auto', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 24, fontWeight: 700 }}>
+          N
+        </div>
+        <h2 style={{ fontSize: '1.5rem', fontWeight: 600 }}>Willkommen bei NexService</h2>
+        <p style={{ color: 'var(--color-text-muted)', marginTop: '8px', fontSize: '14px' }}>Bitte logge dich ein, um fortzufahren.</p>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text-muted)' }}>E-Mail Adresse</label>
+          <input type="email" placeholder="bruce@wayne.com" style={{ width: '100%', padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text-main)', fontSize: '14px', outline: 'none' }} />
+        </div>
+        <div>
+          <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text-muted)' }}>
+            Passwort
+            <a href="#" style={{ fontWeight: 400 }}>Passwort vergessen?</a>
+          </label>
+          <input type="password" placeholder="••••••••" style={{ width: '100%', padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', color: 'var(--color-text-main)', fontSize: '14px', outline: 'none' }} />
+        </div>
+        
+        <Link to="/" style={{ width: '100%', marginTop: '8px' }}>
+          <button className="btn-primary" style={{ width: '100%', padding: '12px', fontSize: '15px' }}>
+            Anmelden
+          </button>
+        </Link>
+      </div>
+      
+      <div style={{ textAlign: 'center', marginTop: '32px', fontSize: '13px', color: 'var(--color-text-muted)' }}>
+        Du hast noch kein Kundenkonto? <a href="#" style={{ fontWeight: 500 }}>Support kontaktieren</a>
+      </div>
+    </div>
+  </div>
+);
+
 // Dummy Data for Tickets
 const dummyTickets = [
   { id: 'T-1042', title: 'Serverausfall in Region EU-West', customer: 'Acme Corp', status: 'Kritisch', priority: 'Hoch', assignee: 'Joel H.', updated: 'vor 10 Min' },
@@ -379,74 +474,79 @@ const App = () => {
 
   return (
     <Router basename="/ERD">
-      <div className="app-container">
-        <Sidebar isCollapsed={isSidebarCollapsed} />
-        
-        <main className="main-content">
-          <header className="topbar">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <button 
-                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)', transition: 'background-color var(--transition-fast)' }}
-                className="hover-bg"
-                aria-label="Toggle Sidebar"
-              >
-                {isSidebarCollapsed ? <Menu size={20} /> : <ChevronLeft size={20} />}
-              </button>
-              
-              <div style={{ position: 'relative' }}>
-                <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-                <input 
-                  type="text" 
-                  placeholder="Suche nach Ticket, Kunde, Projekt..." 
-                  style={{ 
-                    padding: '10px 16px 10px 44px', 
-                    borderRadius: 'var(--radius-pill)', 
-                    border: '1px solid var(--color-border)', 
-                    backgroundColor: 'var(--color-surface-hover)', 
-                    color: 'var(--color-text-main)', 
-                    width: '360px', 
-                    outline: 'none',
-                    fontSize: '14px',
-                    transition: 'all var(--transition-fast)'
-                  }} 
-                />
-              </div>
-            </div>
+      <Routes>
+        <Route path="/login" element={<LoginView />} />
+        <Route path="*" element={
+          <div className="app-container">
+            <Sidebar isCollapsed={isSidebarCollapsed} />
             
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-              <ThemeToggle />
-              
-              <button style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)' }}>
-                <Bell size={20} />
-                <span style={{ position: 'absolute', top: 8, right: 8, width: 8, height: 8, backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-surface)' }} />
-              </button>
-              
-              <div style={{ width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 8px' }} />
+            <main className="main-content">
+              <header className="topbar">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <button 
+                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)', transition: 'background-color var(--transition-fast)' }}
+                    className="hover-bg"
+                    aria-label="Toggle Sidebar"
+                  >
+                    {isSidebarCollapsed ? <Menu size={20} /> : <ChevronLeft size={20} />}
+                  </button>
+                  
+                  <div style={{ position: 'relative' }}>
+                    <Search size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+                    <input 
+                      type="text" 
+                      placeholder="Suche nach Ticket, Kunde, Projekt..." 
+                      style={{ 
+                        padding: '10px 16px 10px 44px', 
+                        borderRadius: 'var(--radius-pill)', 
+                        border: '1px solid var(--color-border)', 
+                        backgroundColor: 'var(--color-surface-hover)', 
+                        color: 'var(--color-text-main)', 
+                        width: '360px', 
+                        outline: 'none',
+                        fontSize: '14px',
+                        transition: 'all var(--transition-fast)'
+                      }} 
+                    />
+                  </div>
+                </div>
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                  <ThemeToggle />
+                  
+                  <button style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)' }}>
+                    <Bell size={20} />
+                    <span style={{ position: 'absolute', top: 8, right: 8, width: 8, height: 8, backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-surface)' }} />
+                  </button>
+                  
+                  <div style={{ width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 8px' }} />
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
-                <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } } as any}>
-                  <p style={{ fontSize: '13px', fontWeight: 600 }}>Joel Hediger</p>
-                  <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Administrator</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}>
+                    <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } } as any}>
+                      <p style={{ fontSize: '13px', fontWeight: 600 }}>Joel Hediger</p>
+                      <p style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Administrator</p>
+                    </div>
+                    <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '14px' }}>
+                      JH
+                    </div>
+                  </div>
                 </div>
-                <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: '14px' }}>
-                  JH
-                </div>
+              </header>
+              
+              <div className="content-area">
+                <Routes>
+                  <Route path="/" element={<DashboardView />} />
+                  <Route path="/tickets" element={<TicketsView />} />
+                  <Route path="/customers" element={<CustomersView />} />
+                  <Route path="/quotes" element={<QuotesView />} />
+                  <Route path="/settings" element={<div><h1 style={{ marginBottom: '24px', fontSize: '1.5rem', fontWeight: 600 }}>System Settings</h1></div>} />
+                </Routes>
               </div>
-            </div>
-          </header>
-          
-          <div className="content-area">
-            <Routes>
-              <Route path="/" element={<DashboardView />} />
-              <Route path="/tickets" element={<TicketsView />} />
-              <Route path="/customers" element={<CustomersView />} />
-              <Route path="/quotes" element={<div><h1 style={{ marginBottom: '24px', fontSize: '1.5rem', fontWeight: 600 }}>Offerten</h1></div>} />
-              <Route path="/settings" element={<div><h1 style={{ marginBottom: '24px', fontSize: '1.5rem', fontWeight: 600 }}>System Settings</h1></div>} />
-            </Routes>
+            </main>
           </div>
-        </main>
-      </div>
+        } />
+      </Routes>
     </Router>
   );
 };
