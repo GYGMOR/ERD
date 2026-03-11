@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen, ShieldCheck } from 'lucide-react';
+import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen, ShieldCheck, AlertTriangle, X } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
 import { TicketDetailView } from './pages/TicketDetailView';
@@ -37,6 +37,59 @@ const ThemeToggle = () => {
     <button onClick={toggleTheme} className="theme-toggle" aria-label="Toggle theme" style={{color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%'}}>
       {isDark ? <Sun size={20} /> : <Moon size={20} />}
     </button>
+  );
+};
+
+// ─── Notification Bell ────────────────────────────────────────────────────────
+interface Notif { id: string; type: string; title: string; body: string; created_at: string }
+const TYPE_COLOR: Record<string, string> = { danger: 'var(--color-danger)', warning: 'var(--color-warning)', info: 'var(--color-info)' };
+
+const NotificationBell = () => {
+  const [open, setOpen] = useState(false);
+  const [notifs, setNotifs] = useState<Notif[]>([]);
+  const bellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch('/api/notifications').then(r => r.json()).then(d => { if (d.success) setNotifs(d.data); }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (bellRef.current && !bellRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div ref={bellRef} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: open ? 'var(--color-primary)' : 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', transition: 'color 0.15s' }}>
+        <Bell size={20} />
+        {notifs.length > 0 && <span style={{ position: 'absolute', top: 8, right: 8, width: 8, height: 8, backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-surface)' }} />}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', right: 0, top: 48, width: 380, maxHeight: 480, overflowY: 'auto', backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', zIndex: 200 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--color-border)' }}>
+            <span style={{ fontWeight: 700, fontSize: 15 }}>Benachrichtigungen</span>
+            <span style={{ fontSize: 12, fontWeight: 600, backgroundColor: notifs.length > 0 ? 'var(--color-danger)' : 'var(--color-border)', color: notifs.length > 0 ? 'white' : 'var(--color-text-muted)', borderRadius: 10, padding: '2px 8px' }}>{notifs.length}</span>
+          </div>
+          {notifs.length === 0 ? (
+            <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 14 }}>Keine Benachrichtigungen ✓</div>
+          ) : notifs.map(n => (
+            <div key={n.id} style={{ display: 'flex', gap: 12, padding: '14px 20px', borderBottom: '1px solid var(--color-border)', transition: 'background 0.1s' }} className="hover-bg-row">
+              <div style={{ flexShrink: 0, marginTop: 2, color: TYPE_COLOR[n.type] || 'var(--color-info)' }}><AlertTriangle size={16} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13, color: TYPE_COLOR[n.type] || 'var(--color-text-main)' }}>{n.title}</div>
+                <div style={{ fontSize: 13, color: 'var(--color-text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.body}</div>
+              </div>
+            </div>
+          ))}
+          <div style={{ padding: '10px 20px', textAlign: 'center' }}>
+            <button onClick={() => setOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>
+              <X size={13} /> Schliessen
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -177,11 +230,7 @@ const App = () => {
                 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <ThemeToggle />
-                  
-                  <button style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: '50%', color: 'var(--color-text-muted)' }}>
-                    <Bell size={20} />
-                    <span style={{ position: 'absolute', top: 8, right: 8, width: 8, height: 8, backgroundColor: 'var(--color-danger)', borderRadius: '50%', border: '2px solid var(--color-surface)' }} />
-                  </button>
+                  <NotificationBell />
                   
                   <div style={{ width: 1, height: 24, backgroundColor: 'var(--color-border)', margin: '0 8px' }} />
 

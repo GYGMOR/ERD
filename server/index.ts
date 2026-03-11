@@ -132,6 +132,115 @@ app.patch('/api/users/:id', async (req: express.Request, res: express.Response) 
   }
 });
 
+// ─── Ticket Comments ──────────────────────────────────────────────────────────
+app.get('/api/tickets/:id/comments', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT c.*, u.first_name, u.last_name, u.email
+       FROM ticket_comments c
+       LEFT JOIN users u ON c.user_id = u.id
+       WHERE c.ticket_id = $1
+       ORDER BY c.created_at ASC`,
+      [id]
+    );
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching comments:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching comments' });
+  }
+});
+
+app.post('/api/tickets/:id/comments', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { user_id, body, is_internal } = req.body;
+  if (!user_id || !body) {
+    return res.status(400).json({ success: false, error: 'user_id and body are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO ticket_comments (ticket_id, user_id, body, is_internal)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [id, user_id, body, is_internal || false]
+    );
+    // Also update ticket updated_at
+    await pool.query(`UPDATE tickets SET updated_at = NOW() WHERE id = $1`, [id]);
+
+    // Fetch joined with user data
+    const joined = await pool.query(
+      `SELECT c.*, u.first_name, u.last_name, u.email
+       FROM ticket_comments c LEFT JOIN users u ON c.user_id = u.id
+       WHERE c.id = $1`,
+      [result.rows[0].id]
+    );
+    res.status(201).json({ success: true, data: joined.rows[0] });
+  } catch (error) {
+    console.error('Error creating comment:', error);
+    res.status(500).json({ success: false, error: 'Server error creating comment' });
+  }
+});
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+app.get('/api/notifications', async (req: express.Request, res: express.Response) => {
+  try {
+    // Derive "smart" notifications from existing data
+    const overdueInv = await pool.query(`SELECT id, title, amount, due_date FROM invoices WHERE status = 'overdue' ORDER BY due_date ASC LIMIT 5`);
+    const criticalTkts = await pool.query(`SELECT id, title, created_at FROM tickets WHERE priority = 'critical' AND status NOT IN ('closed','resolved') ORDER BY created_at DESC LIMIT 5`);
+    const overdueProjects = await pool.query(`SELECT id, name, end_date FROM projects WHERE end_date < NOW() AND status NOT IN ('completed','cancelled') LIMIT 5`);
+
+    const notifications: { id: string; type: string; title: string; body: string; created_at: string }[] = [];
+
+    for (const inv of overdueInv.rows) {
+      notifications.push({ id: `inv-${inv.id}`, type: 'warning', title: 'Überfällige Rechnung', body: `${inv.title} — CHF ${parseFloat(inv.amount).toFixed(2)} (fällig: ${new Date(inv.due_date).toLocaleDateString('de-CH')})`, created_at: inv.due_date });
+    }
+    for (const t of criticalTkts.rows) {
+      notifications.push({ id: `tkt-${t.id}`, type: 'danger', title: 'Kritisches Ticket', body: t.title, created_at: t.created_at });
+    }
+    for (const p of overdueProjects.rows) {
+      notifications.push({ id: `proj-${p.id}`, type: 'warning', title: 'Projekt überfällig', body: `${p.name} — Enddatum: ${new Date(p.end_date).toLocaleDateString('de-CH')}`, created_at: p.end_date });
+    }
+
+    notifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    res.status(200).json({ success: true, data: notifications.slice(0, 15) });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ─── Invoice CSV Export ───────────────────────────────────────────────────────
+app.get('/api/invoices/export/csv', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT i.id, i.title, c.name as company, i.amount, i.status, i.due_date, i.created_at
+      FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
+      ORDER BY i.created_at DESC
+    `);
+    const rows = result.rows;
+    const header = ['ID', 'Titel', 'Firma', 'Betrag (CHF)', 'Status', 'Fälligkeit', 'Erstellt'];
+    const csv = [
+      header.join(';'),
+      ...rows.map(r => [
+        r.id,
+        `"${(r.title || '').replace(/"/g, '""')}"`,
+        `"${(r.company || '').replace(/"/g, '""')}"`,
+        parseFloat(r.amount || 0).toFixed(2),
+        r.status,
+        r.due_date ? new Date(r.due_date).toLocaleDateString('de-CH') : '',
+        new Date(r.created_at).toLocaleDateString('de-CH'),
+      ].join(';')),
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="rechnungen.csv"');
+    res.send('\uFEFF' + csv); // BOM for Excel
+  } catch (error) {
+    console.error('Error exporting CSV:', error);
+    res.status(500).json({ success: false, error: 'Export failed' });
+  }
+});
+
 // Dashboard Metrics Route
 app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Response) => {
   try {

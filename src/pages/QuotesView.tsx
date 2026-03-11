@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Download } from 'lucide-react';
 import { getTenantId } from '../utils/auth';
 import type { Invoice, Company } from '../types/entities';
 
@@ -111,6 +111,10 @@ export const QuotesView = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
+  const handleExportCSV = () => {
+    window.open('/api/invoices/export/csv', '_blank');
+  };
+
   const fetchInvoices = async () => {
     try {
       const res = await fetch('/api/invoices');
@@ -137,9 +141,14 @@ export const QuotesView = () => {
         <h1 style={{ fontSize: '1.75rem', fontWeight: 600, letterSpacing: '-0.02em' }}>Offerten & Rechnungen</h1>
         <p style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>Verwalte alle ausgehenden Angebote und Rechnungen.</p>
       </div>
-      <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => setShowModal(true)}>
-        <Plus size={16} /> Neue Rechnung
-      </button>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button onClick={handleExportCSV} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 16px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', cursor: 'pointer', fontWeight: 500, fontSize: 14, color: 'var(--color-text-main)', transition: 'background 0.15s' }}>
+          <Download size={15} /> CSV Export
+        </button>
+        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => setShowModal(true)}>
+          <Plus size={16} /> Neue Rechnung
+        </button>
+      </div>
     </div>
 
     {/* Summary Cards */}
