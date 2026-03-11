@@ -53,6 +53,21 @@ export interface Invoice {
   updated_at: string;
 }
 
+export interface Contact {
+  id: string;
+  tenant_id: string;
+  company_id: string | null;
+  company_name: string | null;
+  first_name: string;
+  last_name: string;
+  email: string | null;
+  phone: string | null;
+  role: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ChartEntry {
   name: string;
   value: number;

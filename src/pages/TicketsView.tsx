@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Ticket as TicketIcon } from 'lucide-react';
 import { NewTicketModal } from '../components/NewTicketModal';
 import type { Ticket } from '../types/entities';
 
 export const TicketsView = () => {
+  const navigate = useNavigate();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -61,7 +63,11 @@ export const TicketsView = () => {
           ) : tickets.length === 0 ? (
             <tr><td colSpan={6} style={{ padding: '24px', textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine Tickets gefunden.</td></tr>
           ) : tickets.map((ticket, i) => (
-            <tr key={ticket.id} style={{ borderBottom: i === tickets.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }} className="hover-bg-row">
+            <tr key={ticket.id}
+              onClick={() => navigate(`/tickets/${ticket.id}`)}
+              style={{ borderBottom: i === tickets.length - 1 ? 'none' : '1px solid var(--color-border)', transition: 'background-color var(--transition-fast)', cursor: 'pointer' }}
+              className="hover-bg-row"
+            >
               <td style={{ padding: '16px 24px', fontWeight: 500, color: 'var(--color-primary)' }}>TICKET-{ticket.id.substring(0,6)}</td>
               <td style={{ padding: '16px 24px', fontWeight: 500 }}>{ticket.title}</td>
               <td style={{ padding: '16px 24px', color: 'var(--color-text-muted)' }}>{ticket.company_name || 'Kein Kunde'}</td>

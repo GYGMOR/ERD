@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search } from 'lucide-react';
+import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
+import { TicketDetailView } from './pages/TicketDetailView';
+import { ContactsView } from './pages/ContactsView';
 import { CustomersView } from './pages/CustomersView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
@@ -83,6 +85,7 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: ()
       {isCollapsed && <div style={{height: 1, backgroundColor: 'var(--color-border)', margin: '16px 8px'}} />}
       
       <NavItem to="/customers" icon={Users} label="Kunden" isCollapsed={isCollapsed} />
+      <NavItem to="/contacts" icon={UserCheck} label="Kontakte" isCollapsed={isCollapsed} />
       <NavItem to="/quotes" icon={FileText} label="Offerten" isCollapsed={isCollapsed} />
     </nav>
     
@@ -193,7 +196,9 @@ const App = () => {
                 <Routes>
                   <Route path="/" element={<DashboardView />} />
                   <Route path="/tickets" element={<TicketsView />} />
+                  <Route path="/tickets/:id" element={<TicketDetailView />} />
                   <Route path="/customers" element={<CustomersView />} />
+                  <Route path="/contacts" element={<ContactsView />} />
                   <Route path="/quotes" element={<QuotesView />} />
                   <Route path="/settings" element={<SettingsView />} />
                 </Routes>

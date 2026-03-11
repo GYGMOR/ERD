@@ -160,6 +160,83 @@ app.get('/api/contacts', async (req: express.Request, res: express.Response) => 
   }
 });
 
+app.post('/api/contacts', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, company_id, first_name, last_name, email, phone, role } = req.body;
+  if (!tenant_id || !first_name || !last_name) {
+    return res.status(400).json({ success: false, error: 'Tenant ID, First and Last Name are required' });
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO contacts (tenant_id, company_id, first_name, last_name, email, phone, role)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [tenant_id, company_id || null, first_name, last_name, email, phone, role]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating contact:', error);
+    res.status(500).json({ success: false, error: 'Server error creating contact' });
+  }
+});
+
+app.get('/api/companies/:id', async (req: express.Request, res: express.Response) => {
+  try {
+    const { id } = req.params;
+    const company = await pool.query('SELECT * FROM companies WHERE id = $1', [id]);
+    if (company.rowCount === 0) return res.status(404).json({ success: false, error: 'Company not found' });
+    const tickets = await pool.query(`SELECT t.*, a.first_name as assignee_first_name, a.last_name as assignee_last_name FROM tickets t LEFT JOIN users a ON t.assignee_id = a.id WHERE t.company_id = $1 ORDER BY t.created_at DESC`, [id]);
+    const invoices = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY created_at DESC', [id]);
+    const contacts = await pool.query('SELECT * FROM contacts WHERE company_id = $1 ORDER BY created_at DESC', [id]);
+    res.status(200).json({ success: true, data: { company: company.rows[0], tickets: tickets.rows, invoices: invoices.rows, contacts: contacts.rows } });
+  } catch (error) {
+    console.error('Error fetching company detail:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching company detail' });
+  }
+});
+
+app.get('/api/tickets/:id', async (req: express.Request, res: express.Response) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(`
+      SELECT t.*, u.first_name as customer_first_name, u.last_name as customer_last_name,
+             a.first_name as assignee_first_name, a.last_name as assignee_last_name,
+             c.name as company_name
+      FROM tickets t
+      LEFT JOIN users u ON t.customer_id = u.id
+      LEFT JOIN users a ON t.assignee_id = a.id
+      LEFT JOIN companies c ON t.company_id = c.id
+      WHERE t.id = $1
+    `, [id]);
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error fetching ticket:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching ticket' });
+  }
+});
+
+app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { status, priority, assignee_id, title, description } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE tickets SET 
+        status = COALESCE($1, status),
+        priority = COALESCE($2, priority),
+        assignee_id = COALESCE($3, assignee_id),
+        title = COALESCE($4, title),
+        description = COALESCE($5, description),
+        updated_at = NOW()
+       WHERE id = $6 RETURNING *`,
+      [status, priority, assignee_id, title, description, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating ticket:', error);
+    res.status(500).json({ success: false, error: 'Server error updating ticket' });
+  }
+});
+
 // --- Ticket Routes ---
 app.get('/api/tickets', async (req: express.Request, res: express.Response) => {
   try {
