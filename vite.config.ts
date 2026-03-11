@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   base: '/ERD/',
   server: {
+    host: '0.0.0.0', // Allow network access
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

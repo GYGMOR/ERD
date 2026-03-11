@@ -45,6 +45,6 @@ app.get('/api/test-db', async (req, res) => {
 });
 
 // Start server
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server running on port ${port} and accessible on the network`);
 });
