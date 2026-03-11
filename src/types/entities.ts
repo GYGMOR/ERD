@@ -225,4 +225,21 @@ export interface TimelineEvent {
   created_at: string;
 }
 
+
+export interface Notification {
+  id: string;
+  tenant_id: string | null;
+  user_id: string | null;
+  target_role: string | null;
+  type: 'ticket' | 'project' | 'invoice' | 'contract';
+  entity_id: string | null;
+  title: string;
+  message: string;
+  priority: 'info' | 'normal' | 'high' | 'critical';
+  is_read: boolean;
+  link: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type UserRole = 'admin' | 'manager' | 'employee' | 'customer';

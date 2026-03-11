@@ -1,216 +1,276 @@
 import { useState, useEffect } from 'react';
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Ticket, TrendingUp, FolderOpen, Clock, AlertTriangle } from 'lucide-react';
-import { revData } from '../utils/dummyData';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Ticket, TrendingUp, FolderOpen, Clock, AlertTriangle, Tag, Activity, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import type { ChartEntry } from '../types/entities';
+import type { TimelineEvent } from '../types/entities';
 
 // ─── KPI Card ────────────────────────────────────────────────────────────────
-const KpiCard = ({ title, value, sub, badge, badgeCls, color, icon: Icon }:
-  { title: string; value: string | number; sub?: string; badge?: string; badgeCls?: string; color: string; icon: React.ElementType }) => (
-  <div className="card" style={{ borderTop: `4px solid ${color}`, position: 'relative', overflow: 'hidden' }}>
+const KpiCard = ({ title, value, sub, badge, badgeCls, color, icon: Icon, onClick }:
+  { title: string; value: string | number; sub?: string; badge?: string; badgeCls?: string; color: string; icon: React.ElementType; onClick?: () => void }) => (
+  <div className="card hover-bg-row" style={{ borderTop: `4px solid ${color}`, position: 'relative', overflow: 'hidden', cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-      <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</p>
-      <div style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', backgroundColor: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', color }}>
-        <Icon size={18} />
+      <p style={{ color: 'var(--color-text-muted)', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{title}</p>
+      <div style={{ width: 32, height: 32, borderRadius: 'var(--radius-sm)', backgroundColor: `${color}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', color }}>
+        <Icon size={16} />
       </div>
     </div>
-    <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 10 }}>
-      <h2 style={{ fontSize: '2.2rem', fontWeight: 700, lineHeight: 1 }}>{value}</h2>
-      {badge && <span className={'badge ' + (badgeCls || 'info')}>{badge}</span>}
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginTop: 8 }}>
+      <h2 style={{ fontSize: '1.8rem', fontWeight: 800, lineHeight: 1 }}>{value}</h2>
+      {badge && <span className={'badge ' + (badgeCls || 'info')} style={{ fontSize: 9 }}>{badge}</span>}
     </div>
-    {sub && <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6 }}>{sub}</p>}
+    {sub && <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>{sub}</p>}
   </div>
 );
 
-// ─── Main Dashboard ───────────────────────────────────────────────────────────
 export const DashboardView = () => {
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState({
-    openTickets: 0, criticalTickets: 0, revenueMtd: 0, activeProjects: 0, satisfaction: 100
+    openTickets: 0, criticalTickets: 0, activeProjects: 0, 
+    newLeads: 4, pipelineValue: 12500,
+    paidInvoices: 8, overdueInvoices: 2
   });
-  const [revenue, setRevenue] = useState({ mtd: 0, ytd: 0, pending: 0, overdue: 0 });
-  const [ticketData, setTicketData] = useState<ChartEntry[]>([]);
-  const [loadingRevenue, setLoadingRevenue] = useState(true);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchAll = async () => {
+    const fetchDashboard = async () => {
       try {
-        const [metricsRes, revenueRes] = await Promise.all([
+        const [mRes, tRes] = await Promise.all([
           fetch('/api/dashboard/metrics'),
-          fetch('/api/dashboard/revenue'),
+          fetch('/api/timeline?limit=5')
         ]);
-        const [metricsData, revenueData] = await Promise.all([metricsRes.json(), revenueRes.json()]);
-        if (metricsData.success) {
-          setMetrics(metricsData.metrics);
-          setTicketData(metricsData.charts.ticketData);
-        }
-        if (revenueData.success) {
-          setRevenue(revenueData.data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch dashboard data', error);
+        const mData = await mRes.json();
+        const tData = await tRes.json();
+        if (mData.success) setMetrics(prev => ({ ...prev, ...mData.metrics }));
+        if (tData.success) setTimeline(tData.data);
+      } catch (err) {
+        console.error('Dashboard load error:', err);
       } finally {
-        setLoadingRevenue(false);
+        setLoading(false);
       }
     };
-    fetchAll();
+    fetchDashboard();
   }, []);
 
-  const fmtCHF = (val: number) => {
-    if (val >= 1000) return `CHF ${(val / 1000).toFixed(1)}k`;
-    return `CHF ${val.toFixed(2)}`;
-  };
+  const revenueData = [
+    { name: 'Jan', revenue: 4200, costs: 2100 },
+    { name: 'Feb', revenue: 5100, costs: 2400 },
+    { name: 'Mar', revenue: 3800, costs: 2800 },
+    { name: 'Apr', revenue: 6200, costs: 3100 },
+    { name: 'Mai', revenue: 5900, costs: 3400 },
+    { name: 'Jun', revenue: 7500, costs: 3800 },
+  ];
 
   return (
-  <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-
-    {/* Page Header */}
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 28 }}>
-      <div>
-        <h1 style={{ fontSize: '1.75rem', fontWeight: 600, letterSpacing: '-0.02em' }}>Command Center</h1>
-        <p style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>Willkommen zurück. Hier ist der Überblick für heute.</p>
-      </div>
-      <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => navigate('/tickets')}>
-        <Ticket size={16} /> Neues Ticket
-      </button>
-    </div>
-
-    {/* KPI Row – 5 cards */}
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 20, marginBottom: 28 }}>
-      <KpiCard
-        title="Offene Tickets"
-        value={metrics.openTickets}
-        badge={metrics.criticalTickets > 0 ? `${metrics.criticalTickets} kritisch` : undefined}
-        badgeCls="danger"
-        color="var(--color-warning)"
-        icon={Ticket}
-      />
-      <KpiCard
-        title="Aktive Projekte"
-        value={metrics.activeProjects}
-        sub="Laufende Projekte"
-        color="var(--color-primary)"
-        icon={FolderOpen}
-      />
-      <KpiCard
-        title="Umsatz MTD"
-        value={loadingRevenue ? '...' : fmtCHF(revenue.mtd)}
-        sub="Bezahlte Rechnungen"
-        badge={revenue.overdue > 0 ? `${revenue.overdue} überfällig` : undefined}
-        badgeCls="danger"
-        color="var(--color-success)"
-        icon={TrendingUp}
-      />
-      <KpiCard
-        title="Umsatz YTD"
-        value={loadingRevenue ? '...' : fmtCHF(revenue.ytd)}
-        sub="Laufendes Jahr"
-        color="var(--color-info)"
-        icon={TrendingUp}
-      />
-      <KpiCard
-        title="Ausstehend"
-        value={loadingRevenue ? '...' : fmtCHF(revenue.pending)}
-        sub="Offene Rechnungen"
-        badge={revenue.overdue > 0 ? `${revenue.overdue} überfällig` : undefined}
-        badgeCls="danger"
-        color="var(--color-danger)"
-        icon={AlertTriangle}
-      />
-    </div>
-
-    {/* Charts + Quick Info Row */}
-    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, marginBottom: 24 }}>
-      {/* Revenue Area Chart */}
-      <div className="card">
-        <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 20 }}>Umsatzentwicklung (YTD)</h3>
-        <div style={{ height: 280 }}>
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={revData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-success)" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="var(--color-success)" stopOpacity={0}/>
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 12}} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 12}} tickFormatter={(val) => (val/1000) + 'k'} />
-              <Tooltip
-                contentStyle={{ backgroundColor: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-md)' }}
-                itemStyle={{ color: 'var(--color-text-main)', fontWeight: 600 }}
-                formatter={(val: unknown) => [`CHF ${Number(val).toLocaleString('de-CH')}`, 'Umsatz']}
-              />
-              <Area type="monotone" dataKey="revenue" stroke="var(--color-success)" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
-            </AreaChart>
-          </ResponsiveContainer>
+    <div className="dashboard-page" style={{ maxWidth: 1400, margin: '0 auto' }}>
+      
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+        <div>
+          <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Activity size={28} color="var(--color-primary)" /> Command Center
+          </h1>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: 14, marginTop: 4 }}>
+            Echtzeit-Überblick über alle Unternehmensbereiche.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 12 }}>
+           <button className="btn-secondary" onClick={() => navigate('/timeline')}>
+             <Clock size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> History
+           </button>
+           <button className="btn-primary" onClick={() => navigate('/tickets')}>
+             <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Quick Action
+           </button>
         </div>
       </div>
 
-      {/* Ticket Status Donut */}
-      <div className="card">
-        <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: 16 }}>Ticket Status</h3>
-        <div style={{ height: 280, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          {ticketData.length > 0 ? (
-            <>
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={ticketData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={5} dataKey="value" stroke="none">
-                    {ticketData.map((entry, index) => <Cell key={'cell-' + index} fill={entry.color} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: 'none', boxShadow: 'var(--shadow-md)' }} itemStyle={{ color: 'var(--color-text-main)', fontWeight: 600 }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 8 }}>
-                {ticketData.map((entry, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    <div style={{ width: 9, height: 9, borderRadius: '50%', backgroundColor: entry.color }} />
-                    {entry.name} <strong style={{ color: 'var(--color-text-main)' }}>({entry.value})</strong>
-                  </div>
-                ))}
+      {/* KPI Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
+        <KpiCard
+          title="Offene Supportfälle"
+          value={metrics.openTickets}
+          badge={metrics.criticalTickets > 0 ? `${metrics.criticalTickets} Prio` : undefined}
+          badgeCls="danger"
+          color="#ffab00"
+          icon={Ticket}
+          onClick={() => navigate('/tickets')}
+        />
+        <KpiCard
+          title="Neue Leads"
+          value={metrics.newLeads}
+          sub="Letzte 7 Tage"
+          color="#6554c0"
+          icon={Tag}
+          onClick={() => navigate('/leads')}
+        />
+        <KpiCard
+          title="Aktive Projekte"
+          value={metrics.activeProjects}
+          sub="In Umsetzung"
+          color="var(--color-primary)"
+          icon={FolderOpen}
+          onClick={() => navigate('/projects')}
+        />
+        <KpiCard
+          title="Umsatz (Jun)"
+          value="CHF 7'540"
+          badge="+12%"
+          badgeCls="success"
+          color="#36b37e"
+          icon={TrendingUp}
+          onClick={() => navigate('/accounting')}
+        />
+        <KpiCard
+          title="Überfällig"
+          value={metrics.overdueInvoices}
+          sub="Zahlungserinnerungen"
+          badge="Aktion nötig"
+          badgeCls="danger"
+          color="#ff5630"
+          icon={AlertTriangle}
+          onClick={() => navigate('/quotes')}
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+        
+        {/* Left Column: Analytics */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          
+          {/* Revenue Graph */}
+          <div className="card" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700 }}>Performance & Cashflow</h3>
+              <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#36b37e' }}></div> Umsatz
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ff5630' }}></div> Kosten
+                </span>
               </div>
-            </>
-          ) : (
-            <div style={{ color: 'var(--color-text-muted)', textAlign: 'center', opacity: 0.5 }}>
-              <Clock size={36} style={{ margin: '0 auto 8px' }} />
-              <p style={{ fontSize: 14 }}>Noch keine Ticket-Daten</p>
             </div>
-          )}
-        </div>
-      </div>
-    </div>
+            <div style={{ height: 320, opacity: loading ? 0.5 : 1, transition: 'opacity 0.3s ease' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={revenueData}>
+                  <defs>
+                    <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#36b37e" stopOpacity={0.15}/>
+                      <stop offset="95%" stopColor="#36b37e" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 11}} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 11}} />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)' }}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#36b37e" strokeWidth={3} fillOpacity={1} fill="url(#colorIncome)" />
+                  <Area type="monotone" dataKey="costs" stroke="#ff5630" strokeWidth={2} strokeDasharray="5 5" fill="transparent" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
 
-    {/* Revenue Summary Banner */}
-    <div className="card" style={{ background: 'linear-gradient(135deg, var(--color-primary), #4f46e5)', color: 'white', padding: '24px 28px' }}>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24, alignItems: 'center' }}>
-        <div>
-          <p style={{ fontSize: 12, opacity: 0.75, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Diesen Monat verdient</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: 6 }}>{loadingRevenue ? '...' : fmtCHF(revenue.mtd)}</p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+             {/* Sales Pipeline */}
+             <div className="card" style={{ padding: 20 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Sales Pipeline</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                   {[
+                     { stage: 'Neu / Qualifizierung', count: 8, val: '2.5k', color: '#ffab00' },
+                     { stage: 'Angebot erstellt', count: 3, val: '14.2k', color: '#0052cc' },
+                     { stage: 'Verhandlung', count: 2, val: '5.8k', color: '#6554c0' },
+                   ].map(s => (
+                     <div key={s.stage}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{s.stage}</span>
+                          <span style={{ color: 'var(--color-text-muted)' }}>{s.count} Leads · CHF {s.val}</span>
+                        </div>
+                        <div style={{ height: 6, backgroundColor: 'var(--color-surface-hover)', borderRadius: 3, overflow: 'hidden' }}>
+                           <div style={{ height: '100%', width: `${(s.count / 15) * 100}%`, backgroundColor: s.color }}></div>
+                        </div>
+                     </div>
+                   ))}
+                </div>
+             </div>
+             {/* Quick Stats */}
+             <div className="card" style={{ padding: 20 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Team Auslastung</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                   {[
+                     { name: 'Entwicklung', load: 85, color: '#36b37e' },
+                     { name: 'Support', load: 42, color: '#ffab00' },
+                     { name: 'Marketing', load: 60, color: '#0052cc' },
+                   ].map(t => (
+                     <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 2 }}>
+                            <span>{t.name}</span>
+                            <span>{t.load}%</span>
+                          </div>
+                          <div style={{ height: 4, backgroundColor: 'var(--color-surface-hover)', borderRadius: 2 }}>
+                            <div style={{ height: '100%', width: `${t.load}%`, backgroundColor: t.color }}></div>
+                          </div>
+                        </div>
+                     </div>
+                   ))}
+                </div>
+             </div>
+          </div>
+
         </div>
-        <div>
-          <p style={{ fontSize: 12, opacity: 0.75, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Dieses Jahr verdient</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: 6 }}>{loadingRevenue ? '...' : fmtCHF(revenue.ytd)}</p>
-        </div>
-        <div>
-          <p style={{ fontSize: 12, opacity: 0.75, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ausstehend</p>
-          <p style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: 6 }}>{loadingRevenue ? '...' : fmtCHF(revenue.pending)}</p>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          {revenue.overdue > 0 ? (
-            <div>
-              <p style={{ fontSize: 12, opacity: 0.75, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Überfällige Rechnungen</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: 6 }}>{revenue.overdue}</p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, opacity: 0.85 }}>
-              <span style={{ fontSize: 24 }}>✓</span>
-              <p style={{ fontWeight: 600 }}>Keine überfälligen Rechnungen</p>
-            </div>
-          )}
-        </div>
+
+        {/* Right Column: Feed */}
+        <aside style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+          
+          <div className="card" style={{ padding: 20, flex: 1 }}>
+             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+               <Clock size={16} color="var(--color-primary)" /> Live Aktivität
+             </h3>
+             <div style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'relative' }}>
+                <div style={{ position: 'absolute', left: 11, top: 0, bottom: 0, width: 1, backgroundColor: 'var(--color-border)' }}></div>
+                {timeline.length > 0 ? timeline.map((event, i) => (
+                  <div key={event.id || i} style={{ display: 'flex', gap: 16, position: 'relative' }}>
+                    <div style={{ 
+                      width: 22, height: 22, borderRadius: '50%', backgroundColor: 'var(--color-background)', 
+                      border: '2px solid var(--color-primary)', zIndex: 1, flexShrink: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-primary)' }}></div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                       <p style={{ fontSize: 12, fontWeight: 700, margin: 0 }}>{event.title}</p>
+                       <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '2px 0 6px 0' }}>{event.description}</p>
+                       <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontWeight: 600 }}>{new Date(event.created_at).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })} Uhr</span>
+                    </div>
+                  </div>
+                )) : (
+                  <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--color-text-muted)', fontSize: 12 }}>Noch keine Aktivitäten</div>
+                )}
+             </div>
+             <button 
+               className="btn-secondary" 
+               style={{ width: '100%', marginTop: 24, fontSize: 11, padding: '8px' }}
+               onClick={() => navigate('/timeline')}
+             >
+               Alle Aktivitäten ansehen
+             </button>
+          </div>
+
+          <div className="card" style={{ padding: 20, backgroundColor: 'var(--color-primary)', color: 'white', border: 'none' }}>
+             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Pro Upgrade</h3>
+             <p style={{ fontSize: 12, opacity: 0.9, lineHeight: 1.5, marginBottom: 16 }}>
+               Schalten Sie KI-gestützte Analysen und automatisierte Workflows frei.
+             </p>
+             <button style={{ width: '100%', backgroundColor: 'white', color: 'var(--color-primary)', border: 'none', padding: '8px', borderRadius: 'var(--radius-sm)', fontSize: 12, fontWeight: 700 }}>
+               Mehr erfahren
+             </button>
+          </div>
+
+        </aside>
+
       </div>
     </div>
-  </div>
   );
 };

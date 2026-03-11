@@ -182,30 +182,77 @@ app.post('/api/tickets/:id/comments', async (req: express.Request, res: express.
 });
 
 // ─── Notifications ────────────────────────────────────────────────────────────
-app.get('/api/notifications', async (req: express.Request, res: express.Response) => {
+
+// Helper to create notifications
+const createNotification = async (notif: {
+  tenant_id: string | null;
+  user_id?: string | null;
+  target_role?: string | null;
+  type: string;
+  entity_id: string | null;
+  title: string;
+  message: string;
+  priority?: string;
+  link?: string | null;
+}) => {
   try {
-    // Derive "smart" notifications from existing data
-    const overdueInv = await pool.query(`SELECT id, title, amount, due_date FROM invoices WHERE status = 'overdue' ORDER BY due_date ASC LIMIT 5`);
-    const criticalTkts = await pool.query(`SELECT id, title, created_at FROM tickets WHERE priority = 'critical' AND status NOT IN ('closed','resolved') ORDER BY created_at DESC LIMIT 5`);
-    const overdueProjects = await pool.query(`SELECT id, name, end_date FROM projects WHERE end_date < NOW() AND status NOT IN ('completed','cancelled') LIMIT 5`);
+    await pool.query(
+      `INSERT INTO notifications (tenant_id, user_id, target_role, type, entity_id, title, message, priority, link)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        notif.tenant_id,
+        notif.user_id || null,
+        notif.target_role || null,
+        notif.type,
+        notif.entity_id,
+        notif.title,
+        notif.message,
+        notif.priority || 'normal',
+        notif.link || null
+      ]
+    );
+  } catch (error) {
+    console.error('Failed to create notification:', error);
+  }
+};
 
-    const notifications: { id: string; type: string; title: string; body: string; created_at: string }[] = [];
-
-    for (const inv of overdueInv.rows) {
-      notifications.push({ id: `inv-${inv.id}`, type: 'warning', title: 'Überfällige Rechnung', body: `${inv.title} — CHF ${parseFloat(inv.amount).toFixed(2)} (fällig: ${new Date(inv.due_date).toLocaleDateString('de-CH')})`, created_at: inv.due_date });
-    }
-    for (const t of criticalTkts.rows) {
-      notifications.push({ id: `tkt-${t.id}`, type: 'danger', title: 'Kritisches Ticket', body: t.title, created_at: t.created_at });
-    }
-    for (const p of overdueProjects.rows) {
-      notifications.push({ id: `proj-${p.id}`, type: 'warning', title: 'Projekt überfällig', body: `${p.name} — Enddatum: ${new Date(p.end_date).toLocaleDateString('de-CH')}`, created_at: p.end_date });
-    }
-
-    notifications.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    res.status(200).json({ success: true, data: notifications.slice(0, 15) });
+app.get('/api/notifications', async (req: express.Request, res: express.Response) => {
+  const userId = req.query.userId as string;
+  const role = req.query.role as string;
+  try {
+    // Return notifications for the specific user OR for their role (if internal)
+    const result = await pool.query(`
+      SELECT * FROM notifications 
+      WHERE (user_id = $1 OR target_role = $2 OR (target_role = 'admin' AND $2 = 'admin'))
+      AND is_read = false
+      ORDER BY created_at DESC 
+      LIMIT 50
+    `, [userId || null, role || null]);
+    
+    res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     console.error('Error fetching notifications:', error);
     res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.patch('/api/notifications/:id/read', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  try {
+    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE id = $1', [id]);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to update notification' });
+  }
+});
+
+app.post('/api/notifications/read-all', async (req: express.Request, res: express.Response) => {
+  const { userId, role } = req.body;
+  try {
+    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId, role]);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to update notifications' });
   }
 });
 
@@ -351,8 +398,9 @@ app.get('/api/companies/:id', async (req: express.Request, res: express.Response
     if (company.rowCount === 0) return res.status(404).json({ success: false, error: 'Company not found' });
     const tickets = await pool.query(`SELECT t.*, a.first_name as assignee_first_name, a.last_name as assignee_last_name FROM tickets t LEFT JOIN users a ON t.assignee_id = a.id WHERE t.company_id = $1 ORDER BY t.created_at DESC`, [id]);
     const invoices = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY created_at DESC', [id]);
+    const contracts = await pool.query('SELECT * FROM contracts WHERE company_id = $1 ORDER BY created_at DESC', [id]);
     const contacts = await pool.query('SELECT * FROM contacts WHERE company_id = $1 ORDER BY created_at DESC', [id]);
-    res.status(200).json({ success: true, data: { company: company.rows[0], tickets: tickets.rows, invoices: invoices.rows, contacts: contacts.rows } });
+    res.status(200).json({ success: true, data: { company: company.rows[0], tickets: tickets.rows, invoices: invoices.rows, contracts: contracts.rows, contacts: contacts.rows } });
   } catch (error) {
     console.error('Error fetching company detail:', error);
     res.status(500).json({ success: false, error: 'Server error fetching company detail' });
@@ -396,6 +444,22 @@ app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response
       [status, priority, assignee_id, title, description, id]
     );
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+    
+    // Notification for assignment change
+    if (assignee_id && typeof assignee_id === 'string') {
+      const ticket = result.rows[0];
+      await createNotification({
+        tenant_id: ticket.tenant_id,
+        user_id: assignee_id,
+        type: 'ticket',
+        entity_id: id,
+        title: 'Ticket zugewiesen',
+        message: `Das Ticket #${id.substring(0,6).toUpperCase()} "${ticket.title}" wurde Ihnen zugewiesen.`,
+        priority: ticket.priority === 'critical' ? 'critical' : 'high',
+        link: `/tickets/${id}`
+      });
+    }
+
     res.status(200).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error updating ticket:', error);
@@ -436,6 +500,19 @@ app.post('/api/tickets', async (req: express.Request, res: express.Response) => 
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [tenant_id, title, description, status || 'new', priority || 'medium', type || 'support', company_id, customer_id, assignee_id]
     );
+
+    // Notification for new ticket (to admins/managers)
+    await createNotification({
+      tenant_id: tenant_id,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: result.rows[0].id,
+      title: 'Neues Ticket erstellt',
+      message: `Ein neues Ticket "${title}" wurde erstellt.`,
+      priority: priority === 'critical' ? 'critical' : 'normal',
+      link: `/tickets/${result.rows[0].id}`
+    });
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating ticket:', error);
@@ -470,6 +547,18 @@ app.post('/api/invoices', async (req: express.Request, res: express.Response) =>
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [tenant_id, company_id || null, title, amount || 0, status || 'draft', due_date]
     );
+
+    // Notification for new invoice/quote
+    await createNotification({
+      tenant_id: tenant_id,
+      target_role: 'manager',
+      type: 'invoice',
+      entity_id: result.rows[0].id,
+      title: status === 'draft' ? 'Neue Offerte' : 'Neue Rechnung',
+      message: `${status === 'draft' ? 'Offerte' : 'Rechnung'} "${title}" wurde erstellt.`,
+      link: `/quotes?openQuote=${result.rows[0].id}`
+    });
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating invoice:', error);
@@ -505,6 +594,18 @@ app.post('/api/projects', async (req: express.Request, res: express.Response) =>
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       [tenant_id, company_id || null, name, description, status || 'planning', priority || 'medium', start_date || null, end_date || null]
     );
+
+    // Notification for new project
+    await createNotification({
+      tenant_id: tenant_id,
+      target_role: 'manager',
+      type: 'project',
+      entity_id: result.rows[0].id,
+      title: 'Neues Projekt',
+      message: `Projekt "${name}" wurde gestartet.`,
+      link: `/projects?openProject=${result.rows[0].id}`
+    });
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating project:', error);
@@ -535,16 +636,182 @@ app.patch('/api/projects/:id', async (req: express.Request, res: express.Respons
   }
 });
 
-// Improved dashboard with real invoice revenue
-app.get('/api/dashboard/revenue', async (req: express.Request, res: express.Response) => {
+// ─── Leads / Akquise Routes ───────────────────────────────────────────────────
+app.get('/api/leads', async (req: express.Request, res: express.Response) => {
   try {
-    const mtd = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status = 'paid' AND EXTRACT(MONTH FROM created_at) = EXTRACT(MONTH FROM NOW()) AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())`);
-    const ytd = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status = 'paid' AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())`);
-    const pending = await pool.query(`SELECT COALESCE(SUM(amount::numeric), 0) as revenue FROM invoices WHERE status IN ('sent', 'draft')`);
-    const overdue = await pool.query(`SELECT COUNT(*) as count FROM invoices WHERE status = 'overdue'`);
-    res.status(200).json({ success: true, data: { mtd: parseFloat(mtd.rows[0].revenue), ytd: parseFloat(ytd.rows[0].revenue), pending: parseFloat(pending.rows[0].revenue), overdue: parseInt(overdue.rows[0].count) } });
-  } catch {
-    res.status(500).json({ success: false, error: 'Error fetching revenue data' });
+    const result = await pool.query(`
+      SELECT l.*, u.first_name as assigned_first_name, u.last_name as assigned_last_name
+      FROM leads l
+      LEFT JOIN users u ON l.assigned_to = u.id
+      ORDER BY l.created_at DESC
+    `);
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching leads:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching leads' });
+  }
+});
+
+app.post('/api/leads', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, company_name, website, industry, location, contact_name, contact_email, contact_phone, status, assigned_to, notes } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO leads (tenant_id, company_name, website, industry, location, contact_name, contact_email, contact_phone, status, assigned_to, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [tenant_id, company_name, website, industry, location, contact_name, contact_email, contact_phone, status || 'new', assigned_to, notes]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating lead:', error);
+    res.status(500).json({ success: false, error: 'Server error creating lead' });
+  }
+});
+
+app.patch('/api/leads/:id', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { status, assigned_to, notes, company_name } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE leads SET
+        status = COALESCE($1, status),
+        assigned_to = COALESCE($2, assigned_to),
+        notes = COALESCE($3, notes),
+        company_name = COALESCE($4, company_name),
+        updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [status, assigned_to, notes, company_name, id]
+    );
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating lead:', error);
+    res.status(500).json({ success: false, error: 'Server error updating lead' });
+  }
+});
+
+// ─── Contracts / Verträge Routes ──────────────────────────────────────────────
+app.get('/api/contracts', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT con.*, c.name as company_name, u.first_name as assigned_first_name, u.last_name as assigned_last_name
+      FROM contracts con
+      LEFT JOIN companies c ON con.company_id = c.id
+      LEFT JOIN users u ON con.assigned_to = u.id
+      ORDER BY con.created_at DESC
+    `);
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching contracts:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching contracts' });
+  }
+});
+
+app.post('/api/contracts', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO contracts (tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status || 'draft', notes]
+    );
+
+    // Notification for new contract
+    await createNotification({
+      tenant_id: tenant_id,
+      target_role: 'admin',
+      type: 'contract',
+      entity_id: result.rows[0].id,
+      title: 'Neuer Vertrag',
+      message: `Vertrag "${title}" wurde angelegt.`,
+      link: `/contracts?openContract=${result.rows[0].id}`
+    });
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating contract:', error);
+    res.status(500).json({ success: false, error: 'Server error creating contract' });
+  }
+});
+
+// ─── Products / Produkte Routes ───────────────────────────────────────────────
+app.get('/api/products', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query('SELECT * FROM products ORDER BY name ASC');
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching products' });
+  }
+});
+
+app.post('/api/products', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [tenant_id, name, sku, category, description, price, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating product:', error);
+    res.status(500).json({ success: false, error: 'Server error creating product' });
+  }
+});
+
+// ─── Newsletters Routes ───────────────────────────────────────────────────────
+app.get('/api/newsletters', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query('SELECT * FROM newsletters ORDER BY created_at DESC');
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching newsletters:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching newsletters' });
+  }
+});
+
+app.post('/api/newsletters', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, subject, title, content, status, scheduled_at } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO newsletters (tenant_id, subject, title, content, status, scheduled_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [tenant_id, subject, title, content, status || 'draft', scheduled_at]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating newsletter:', error);
+    res.status(500).json({ success: false, error: 'Server error creating newsletter' });
+  }
+});
+
+// ─── Knowledge Base Routes ────────────────────────────────────────────────────
+app.get('/api/knowledge/articles', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`
+      SELECT a.*, u.first_name as author_first_name, u.last_name as author_last_name
+      FROM kb_articles a
+      LEFT JOIN users u ON a.user_id = u.id
+      ORDER BY a.created_at DESC
+    `);
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching kb articles:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching articles' });
+  }
+});
+
+app.post('/api/knowledge/articles', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, title, content, category, is_published, is_internal, user_id } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, user_id]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating kb article:', error);
+    res.status(500).json({ success: false, error: 'Server error creating article' });
   }
 });
 
@@ -552,3 +819,4 @@ app.get('/api/dashboard/revenue', async (req: express.Request, res: express.Resp
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port} and accessible on the network`);
 });
+

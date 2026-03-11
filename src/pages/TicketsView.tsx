@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Ticket as TicketIcon, Search, X } from 'lucide-react';
 import { NewTicketModal } from '../components/NewTicketModal';
+import { getUser } from '../utils/auth';
 import type { Ticket } from '../types/entities';
 
 const PRIORITY_CLS: Record<string, string> = { low: 'success', medium: 'info', high: 'warning', critical: 'danger' };
@@ -37,6 +38,16 @@ export const TicketsView = () => {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [currentView, setCurrentView] = useState<'meine' | 'neu' | 'alle'>('alle');
+
+  const currentUser = getUser();
+  const isAdminOrManager = currentUser && ['admin', 'manager'].includes(currentUser.role);
+
+  useEffect(() => {
+    // Default to 'meine' if employee/manager, 'alle' if admin
+    if (currentUser?.role === 'admin') setCurrentView('alle');
+    else setCurrentView('meine');
+  }, []);
 
   const fetchTickets = async () => {
     try {
@@ -55,6 +66,11 @@ export const TicketsView = () => {
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return tickets.filter(t => {
+      // Inbox Logic
+      if (currentView === 'meine' && t.assignee_id !== currentUser?.id) return false;
+      if (currentView === 'neu' && (t.assignee_id || !['new', 'open'].includes(t.status))) return false;
+      // Admin 'alle' has no filter
+
       if (filterStatus && t.status !== filterStatus) return false;
       if (filterPriority && t.priority !== filterPriority) return false;
       if (filterType && t.type !== filterType) return false;
@@ -93,18 +109,42 @@ export const TicketsView = () => {
       </button>
     </div>
 
+    {/* Inbox / View Selector */}
+    <div style={{ display: 'flex', gap: 2, backgroundColor: 'var(--color-surface-hover)', padding: 4, borderRadius: 'var(--radius-lg)', marginBottom: 24, width: 'fit-content', border: '1px solid var(--color-border)' }}>
+      <button 
+        onClick={() => setCurrentView('meine')}
+        style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', backgroundColor: currentView === 'meine' ? 'var(--color-surface)' : 'transparent', color: currentView === 'meine' ? 'var(--color-primary)' : 'var(--color-text-muted)', boxShadow: currentView === 'meine' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.2s' }}
+      >
+        Meine Tickets
+      </button>
+      <button 
+        onClick={() => setCurrentView('neu')}
+        style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', backgroundColor: currentView === 'neu' ? 'var(--color-surface)' : 'transparent', color: currentView === 'neu' ? 'var(--color-primary)' : 'var(--color-text-muted)', boxShadow: currentView === 'neu' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.2s' }}
+      >
+        Neue Tickets {tickets.filter(t => !t.assignee_id && ['new', 'open'].includes(t.status)).length > 0 && <span className="badge info" style={{ marginLeft: 6, padding: '1px 6px' }}>{tickets.filter(t => !t.assignee_id && ['new', 'open'].includes(t.status)).length}</span>}
+      </button>
+      {(isAdminOrManager) && (
+        <button 
+          onClick={() => setCurrentView('alle')}
+          style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer', backgroundColor: currentView === 'alle' ? 'var(--color-surface)' : 'transparent', color: currentView === 'alle' ? 'var(--color-primary)' : 'var(--color-text-muted)', boxShadow: currentView === 'alle' ? '0 2px 4px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.2s' }}
+        >
+          Alle Tickets
+        </button>
+      )}
+    </div>
+
     {/* Stats mini-cards */}
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 24 }}>
       <div className="card" style={{ borderTop: '3px solid var(--color-warning)', padding: '16px 20px' }}>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Offen</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Offen (Gesamt)</p>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 6 }}>
           <span style={{ fontSize: '2rem', fontWeight: 700 }}>{openCount}</span>
           {criticalCount > 0 && <span className="badge danger">{criticalCount} kritisch</span>}
         </div>
       </div>
       <div className="card" style={{ borderTop: '3px solid var(--color-info)', padding: '16px 20px' }}>
-        <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Gesamt</p>
-        <span style={{ fontSize: '2rem', fontWeight: 700, marginTop: 6, display: 'block' }}>{tickets.length}</span>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Meine Tickets</p>
+        <span style={{ fontSize: '2rem', fontWeight: 700, marginTop: 6, display: 'block' }}>{tickets.filter(t => t.assignee_id === currentUser?.id).length}</span>
       </div>
       <div className="card" style={{ borderTop: '3px solid var(--color-success)', padding: '16px 20px' }}>
         <p style={{ color: 'var(--color-text-muted)', fontSize: 12, fontWeight: 600, textTransform: 'uppercase' }}>Heute gelöst</p>

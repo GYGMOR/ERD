@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { UserPlus, UserX, UserCheck } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { UserPlus, UserX, UserCheck, Search, X, SortAsc, SortDesc } from 'lucide-react';
 import { getTenantId } from '../utils/auth';
 
 interface User {
@@ -104,8 +104,18 @@ export const UsersView = () => {
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
 
+  // Filter & Search states
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sortBy, setSortBy] = useState<'name' | 'created_at' | 'role'>('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 50;
+
   const fetchUsers = async () => {
     try {
+      setLoading(true);
       const res = await fetch('/api/users');
       const data = await res.json();
       if (data.success) setUsers(data.data);
@@ -114,6 +124,59 @@ export const UsersView = () => {
   };
 
   useEffect(() => { fetchUsers(); }, []);
+
+  const handleSort = (key: 'name' | 'created_at' | 'role') => {
+    if (sortBy === key) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(key);
+      setSortOrder('desc');
+    }
+  };
+
+  const filteredAndSortedUsers = useMemo(() => {
+    let result = [...users];
+
+    // Search
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(u => 
+        u.first_name.toLowerCase().includes(q) || 
+        u.last_name.toLowerCase().includes(q) || 
+        u.email.toLowerCase().includes(q)
+      );
+    }
+
+    // Role Filter
+    if (roleFilter) {
+      result = result.filter(u => u.role === roleFilter);
+    }
+
+    // Status Filter
+    if (statusFilter) {
+      const isActive = statusFilter === 'active';
+      result = result.filter(u => u.is_active === isActive);
+    }
+
+    // Sort
+    result.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'name') comparison = `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`);
+      else if (sortBy === 'role') comparison = a.role.localeCompare(b.role);
+      else if (sortBy === 'created_at') comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+
+    return result;
+  }, [users, search, roleFilter, statusFilter, sortBy, sortOrder]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE;
+    return filteredAndSortedUsers.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredAndSortedUsers, currentPage]);
+
+  const totalPages = Math.ceil(filteredAndSortedUsers.length / ITEMS_PER_PAGE);
 
   const toggleActive = async (user: User) => {
     setSaving(user.id);
@@ -164,6 +227,36 @@ export const UsersView = () => {
         </button>
       </div>
 
+      {/* Filter Bar */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: 250, maxWidth: 400 }}>
+          <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+          <input 
+            value={search} onChange={e => { setSearch(e.target.value); setCurrentPage(1); }} 
+            placeholder="Name oder E-Mail suchen..." 
+            style={{ ...inputStyle, paddingLeft: 38 }}
+          />
+          {search && <X size={14} onClick={() => setSearch('')} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', cursor: 'pointer' }} />}
+        </div>
+        
+        <select style={{ ...selectStyle, height: 40, padding: '0 12px' }} value={roleFilter} onChange={e => { setRoleFilter(e.target.value); setCurrentPage(1); }}>
+          <option value="">Alle Rollen</option>
+          {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+        </select>
+
+        <select style={{ ...selectStyle, height: 40, padding: '0 12px' }} value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setCurrentPage(1); }}>
+          <option value="">Status (Alle)</option>
+          <option value="active">Aktiv</option>
+          <option value="inactive">Deaktiviert</option>
+        </select>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 'auto' }}>
+          <span style={{ fontSize: 13, color: 'var(--color-text-muted)', fontWeight: 500 }}>
+            {filteredAndSortedUsers.length} Benutzer gefunden
+          </span>
+        </div>
+      </div>
+
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 18, marginBottom: 24 }}>
         {Object.entries(ROLES).map(([k, v]) => (
@@ -179,20 +272,32 @@ export const UsersView = () => {
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
-              <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Benutzer</th>
+              <th onClick={() => handleSort('name')} style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', cursor: 'pointer', transition: 'color 0.2s' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Benutzer {sortBy === 'name' && (sortOrder === 'asc' ? <SortAsc size={12} /> : <SortDesc size={12} />)}
+                </div>
+              </th>
               <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>E-Mail</th>
-              <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Rolle</th>
+              <th onClick={() => handleSort('role')} style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Rolle {sortBy === 'role' && (sortOrder === 'asc' ? <SortAsc size={12} /> : <SortDesc size={12} />)}
+                </div>
+              </th>
               <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Status</th>
-              <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Erstellt</th>
+              <th onClick={() => handleSort('created_at')} style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  Erstellt {sortBy === 'created_at' && (sortOrder === 'asc' ? <SortAsc size={12} /> : <SortDesc size={12} />)}
+                </div>
+              </th>
               <th style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Aktionen</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Lade Benutzer...</td></tr>
-            ) : users.length === 0 ? (
-              <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine Benutzer vorhanden.</td></tr>
-            ) : users.map((u, i) => (
+            ) : paginatedUsers.length === 0 ? (
+              <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine passenden Benutzer gefunden.</td></tr>
+            ) : paginatedUsers.map((u, i) => (
               <tr key={u.id} style={{ borderBottom: i === users.length - 1 ? 'none' : '1px solid var(--color-border)', opacity: saving === u.id ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                 <td style={{ padding: '13px 20px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -239,6 +344,27 @@ export const UsersView = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 24 }}>
+          <button 
+            disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}
+            style={{ padding: '6px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', cursor: currentPage === 1 ? 'default' : 'pointer', fontSize: 13, fontWeight: 500, opacity: currentPage === 1 ? 0.5 : 1 }}
+          >
+            Zurück
+          </button>
+          <span style={{ fontSize: 13, color: 'var(--color-text-muted)', fontWeight: 500 }}>
+            Seite {currentPage} von {totalPages}
+          </span>
+          <button 
+            disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}
+            style={{ padding: '6px 14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', cursor: currentPage === totalPages ? 'default' : 'pointer', fontSize: 13, fontWeight: 500, opacity: currentPage === totalPages ? 0.5 : 1 }}
+          >
+            Weiter
+          </button>
+        </div>
+      )}
 
       {showModal && <NewUserModal onClose={() => setShowModal(false)} onSave={() => { setShowModal(false); fetchUsers(); }} />}
     </div>

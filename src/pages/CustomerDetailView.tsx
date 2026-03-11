@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Globe, Phone, Mail, MapPin, Ticket, FileText, Users } from 'lucide-react';
-import type { Company, Ticket as TicketType, Invoice, Contact } from '../types/entities';
+import { ArrowLeft, Globe, Phone, Mail, MapPin, Ticket, FileText, Users, FileSignature, Plus } from 'lucide-react';
+import { QuotePreviewModal } from '../components/QuotePreviewModal';
+import { ContractPreviewModal } from '../components/ContractPreviewModal';
+import { ContactPreviewModal } from '../components/ContactPreviewModal';
+import type { Company, Ticket as TicketType, Invoice, Contact, Contract } from '../types/entities';
 
-type Tab = 'tickets' | 'invoices' | 'contacts';
+type Tab = 'tickets' | 'invoices' | 'contracts' | 'contacts';
 
 const PRIORITY_CLS: Record<string, string> = { low: 'success', medium: 'info', high: 'warning', critical: 'danger' };
 const PRIORITY_LABEL: Record<string, string> = { low: 'Niedrig', medium: 'Mittel', high: 'Hoch', critical: 'Kritisch' };
@@ -18,6 +21,7 @@ interface CompanyDetailData {
   company: Company;
   tickets: TicketType[];
   invoices: Invoice[];
+  contracts: Contract[];
   contacts: Contact[];
 }
 
@@ -43,6 +47,9 @@ export const CustomerDetailView = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<Tab>('tickets');
+  const [selectedQuote, setSelectedQuote] = useState<Invoice | null>(null);
+  const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -65,9 +72,10 @@ export const CustomerDetailView = () => {
     </div>
   );
 
-  const { company, tickets, invoices, contacts } = data;
+  const { company, tickets, invoices, contracts = [], contacts = [] } = data;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + parseFloat(String(i.amount || '0')), 0);
   const openTickets = tickets.filter(t => !['closed', 'resolved'].includes(t.status)).length;
+
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
@@ -131,10 +139,24 @@ export const CustomerDetailView = () => {
         </div>
       </div>
 
+      {/* Quick Actions */}
+      <div style={{ display: 'flex', gap: 12, marginBottom: 24, padding: '0 4px' }}>
+        <button className="btn-primary" onClick={() => navigate('/tickets?company=' + id)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 16px' }}>
+          <Plus size={16} /> Neues Ticket
+        </button>
+        <button className="btn-secondary" onClick={() => navigate('/quotes?company=' + id)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 16px' }}>
+          <Plus size={16} /> Neue Offerte
+        </button>
+        <button className="btn-secondary" onClick={() => navigate('/contracts?company=' + id)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 16px' }}>
+          <Plus size={16} /> Neuer Vertrag
+        </button>
+      </div>
+
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginBottom: 20 }}>
         <TabButton active={activeTab === 'tickets'} icon={Ticket} label="Tickets" count={tickets.length} onClick={() => setActiveTab('tickets')} />
         <TabButton active={activeTab === 'invoices'} icon={FileText} label="Rechnungen" count={invoices.length} onClick={() => setActiveTab('invoices')} />
+        <TabButton active={activeTab === 'contracts'} icon={FileSignature} label="Verträge" count={contracts.length} onClick={() => setActiveTab('contracts')} />
         <TabButton active={activeTab === 'contacts'} icon={Users} label="Kontakte" count={contacts.length} onClick={() => setActiveTab('contacts')} />
       </div>
 
@@ -188,12 +210,52 @@ export const CustomerDetailView = () => {
               </thead>
               <tbody>
                 {invoices.map((inv, i) => (
-                  <tr key={inv.id} style={{ borderBottom: i === invoices.length - 1 ? 'none' : '1px solid var(--color-border)' }}>
+                  <tr key={inv.id} 
+                    onClick={() => setSelectedQuote(inv)}
+                    style={{ borderBottom: i === invoices.length - 1 ? 'none' : '1px solid var(--color-border)', cursor: 'pointer' }}
+                    className="hover-bg-row"
+                  >
                     <td style={{ padding: '12px 20px', fontWeight: 500, color: 'var(--color-primary)', fontSize: 13 }}>INV-{inv.id.substring(0, 6)}</td>
                     <td style={{ padding: '12px 20px', fontWeight: 500 }}>{inv.title}</td>
                     <td style={{ padding: '12px 20px', fontWeight: 600 }}>CHF {parseFloat(String(inv.amount || '0')).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td style={{ padding: '12px 20px' }}><span className={'badge ' + (INV_CLS[inv.status] || 'info')} style={{ fontSize: 12 }}>{INV_LABEL[inv.status] || inv.status}</span></td>
                     <td style={{ padding: '12px 20px', color: 'var(--color-text-muted)', fontSize: 13 }}>{inv.due_date ? new Date(inv.due_date).toLocaleDateString('de-CH') : '–'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {/* Tab: Contracts */}
+      {activeTab === 'contracts' && (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {contracts.length === 0 ? (
+            <div style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine Verträge für diese Firma.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+              <thead>
+                <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
+                  <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Nr.</th>
+                  <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Titel</th>
+                  <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Betrag</th>
+                  <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Intervall</th>
+                  <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Beginn</th>
+                </tr>
+              </thead>
+              <tbody>
+                {contracts.map((c, i) => (
+                  <tr key={c.id} 
+                    onClick={() => setSelectedContract(c)}
+                    style={{ borderBottom: i === contracts.length - 1 ? 'none' : '1px solid var(--color-border)', cursor: 'pointer' }}
+                    className="hover-bg-row"
+                  >
+                    <td style={{ padding: '12px 20px', fontWeight: 500, color: 'var(--color-primary)', fontSize: 13 }}>{c.contract_number || 'VER-' + c.id.substring(0, 6)}</td>
+                    <td style={{ padding: '12px 20px', fontWeight: 500 }}>{c.title}</td>
+                    <td style={{ padding: '12px 20px', fontWeight: 600 }}>CHF {parseFloat(String(c.amount || '0')).toLocaleString('de-CH', { minimumFractionDigits: 2 })}</td>
+                    <td style={{ padding: '12px 20px' }}><span className="badge info" style={{ fontSize: 12, textTransform: 'capitalize' }}>{c.billing_interval}</span></td>
+                    <td style={{ padding: '12px 20px', color: 'var(--color-text-muted)', fontSize: 13 }}>{c.start_date ? new Date(c.start_date).toLocaleDateString('de-CH') : '–'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -210,29 +272,60 @@ export const CustomerDetailView = () => {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
               {contacts.map(c => (
-                <div key={c.id} className="card hover-bg-row" style={{ cursor: 'default', display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                <div 
+                  key={c.id} 
+                  className="card hover-bg-row" 
+                  onClick={() => setSelectedContact(c)}
+                  style={{ cursor: 'pointer', display: 'flex', alignItems: 'flex-start', gap: 16, transition: 'transform 0.15s, box-shadow 0.15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = 'var(--shadow-md)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}
+                >
                   <div style={{ width: 44, height: 44, borderRadius: '50%', backgroundColor: avatarColor(c.id), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
                     {c.first_name.charAt(0)}{c.last_name.charAt(0)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{c.first_name} {c.last_name}</div>
                     {c.role && <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 1 }}>{c.role}</div>}
-                    {c.email && (
-                      <a href={`mailto:${c.email}`} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--color-text-muted)', fontSize: 13, textDecoration: 'none', marginTop: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        <Mail size={12} /> {c.email}
-                      </a>
-                    )}
-                    {c.phone && (
-                      <a href={`tel:${c.phone}`} style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--color-text-muted)', fontSize: 13, textDecoration: 'none', marginTop: 4 }}>
-                        <Phone size={12} /> {c.phone}
-                      </a>
-                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+                      {c.email && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--color-text-muted)', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <Mail size={12} /> {c.email}
+                        </div>
+                      )}
+                      {c.phone && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--color-text-muted)', fontSize: 12 }}>
+                          <Phone size={12} /> {c.phone}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Modals */}
+      {selectedQuote && (
+        <QuotePreviewModal 
+          quote={selectedQuote} 
+          onClose={() => setSelectedQuote(null)} 
+        />
+      )}
+
+      {selectedContract && (
+        <ContractPreviewModal 
+          contract={selectedContract} 
+          onClose={() => setSelectedContract(null)} 
+        />
+      )}
+
+      {selectedContact && (
+        <ContactPreviewModal 
+          contact={selectedContact} 
+          onClose={() => setSelectedContact(null)} 
+        />
       )}
     </div>
   );

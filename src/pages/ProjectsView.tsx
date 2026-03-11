@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Plus, LayoutGrid, List, Calendar, Building2, Folder } from 'lucide-react';
-import { getTenantId } from '../utils/auth';
+import { useSearchParams } from 'react-router-dom';
+import { getTenantId, getUser } from '../utils/auth';
 import type { Project, Company } from '../types/entities';
+import { ProjectPreviewModal } from '../components/ProjectPreviewModal';
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
@@ -111,12 +113,12 @@ const NewProjectModal = ({ onClose, onSave }: { onClose: () => void; onSave: () 
 };
 
 // ─── Project Card (Kanban) ───────────────────────────────────────────────────
-const ProjectCard = ({ project, onStatusChange }: { project: Project; onStatusChange: (id: string, status: string) => void }) => {
+const ProjectCard = ({ project, onStatusChange, onClick }: { project: Project; onStatusChange: (id: string, status: string) => void, onClick: () => void }) => {
   const sc = STATUS_CONFIG[project.status] || STATUS_CONFIG.planning;
   const isOverdue = project.end_date && new Date(project.end_date) < new Date() && !['completed', 'cancelled'].includes(project.status);
 
   return (
-    <div className="card" style={{ padding: 16, cursor: 'default', marginBottom: 0, border: `1px solid var(--color-border)` }}>
+    <div className="card" onClick={onClick} style={{ padding: 16, cursor: 'pointer', marginBottom: 0, border: `1px solid var(--color-border)`, transition: 'transform 0.2s, box-shadow 0.2s' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
         <span className={'badge ' + (PRIORITY_CLS[project.priority] || 'info')} style={{ fontSize: 11 }}>{PRIORITY_LABEL[project.priority]}</span>
         <select
@@ -155,17 +157,33 @@ const ProjectCard = ({ project, onStatusChange }: { project: Project; onStatusCh
 
 // ─── Main View ───────────────────────────────────────────────────────────────
 export const ProjectsView = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('kanban');
   const [search, setSearch] = useState('');
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+
+  const currentUser = getUser();
+  const isInternal = currentUser && ['admin', 'manager', 'employee'].includes(currentUser.role);
 
   const fetchProjects = async () => {
     try {
       const res = await fetch('/api/projects');
       const data = await res.json();
-      if (data.success) setProjects(data.data);
+      if (data.success) {
+        setProjects(data.data);
+        // Deep linking: open project if openProject param is present
+        const openId = searchParams.get('openProject');
+        if (openId) {
+          const p = data.data.find((proj: Project) => proj.id === openId);
+          if (p) setSelectedProject(p);
+          // Clean up param
+          searchParams.delete('openProject');
+          setSearchParams(searchParams, { replace: true });
+        }
+      }
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -260,7 +278,7 @@ export const ProjectsView = () => {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 100, backgroundColor: 'var(--color-surface-hover)', borderRadius: 'var(--radius-lg)', padding: 10 }}>
                   {colProjects.map(p => (
-                    <ProjectCard key={p.id} project={p} onStatusChange={handleStatusChange} />
+                    <ProjectCard key={p.id} project={p} onStatusChange={handleStatusChange} onClick={() => isInternal && setSelectedProject(p)} />
                   ))}
                   {colProjects.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--color-text-muted)', fontSize: 13 }}>Leer</div>
@@ -289,7 +307,7 @@ export const ProjectsView = () => {
                 const sc = STATUS_CONFIG[p.status] || STATUS_CONFIG.planning;
                 const isOverdue = p.end_date && new Date(p.end_date) < new Date() && !['completed', 'cancelled'].includes(p.status);
                 return (
-                  <tr key={p.id} style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid var(--color-border)' }}>
+                  <tr key={p.id} onClick={() => isInternal && setSelectedProject(p)} style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid var(--color-border)', cursor: isInternal ? 'pointer' : 'default' }} className="hover-bg-row">
                     <td style={{ padding: '14px 20px' }}>
                       <div style={{ fontWeight: 600 }}>{p.name}</div>
                       {p.description && <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>{p.description}</div>}
@@ -312,6 +330,7 @@ export const ProjectsView = () => {
       )}
 
       {showModal && <NewProjectModal onClose={() => setShowModal(false)} onSave={() => { setShowModal(false); fetchProjects(); }} />}
+      {selectedProject && <ProjectPreviewModal project={selectedProject} onClose={() => setSelectedProject(null)} />}
     </div>
   );
 };

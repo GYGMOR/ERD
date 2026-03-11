@@ -111,21 +111,33 @@ export const TicketDetailView = () => {
   const [isInternal, setIsInternal] = useState(false);
   const [submittingComment, setSubmittingComment] = useState(false);
   const [commentError, setCommentError] = useState('');
+  // Assignment
+  const [users, setUsers] = useState<{id: string, first_name: string, last_name: string}[]>([]);
+  const [assigneeId, setAssigneeId] = useState('');
+
+  const isAdminOrManager = currentUser && ['admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const [ticketRes, commentsRes] = await Promise.all([
+        const [ticketRes, commentsRes, usersRes] = await Promise.all([
           fetch(`/api/tickets/${id}`),
           fetch(`/api/tickets/${id}/comments`),
+          fetch('/api/users'),
         ]);
-        const [ticketData, commentsData] = await Promise.all([ticketRes.json(), commentsRes.json()]);
+        const [ticketData, commentsData, usersData] = await Promise.all([
+          ticketRes.json(), 
+          commentsRes.json(),
+          usersRes.json()
+        ]);
         if (ticketData.success) {
           setTicket(ticketData.data);
           setStatus(ticketData.data.status);
           setPriority(ticketData.data.priority);
+          setAssigneeId(ticketData.data.assignee_id || '');
         } else { setError('Ticket nicht gefunden.'); }
         if (commentsData.success) setComments(commentsData.data);
+        if (usersData.success) setUsers(usersData.data);
       } catch { setError('Netzwerkfehler.'); }
       finally { setLoading(false); }
     };
@@ -144,7 +156,7 @@ export const TicketDetailView = () => {
       const res = await fetch(`/api/tickets/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, priority }),
+        body: JSON.stringify({ status, priority, assignee_id: assigneeId === '' ? null : assigneeId }),
       });
       const data = await res.json();
       if (data.success) {
@@ -152,6 +164,26 @@ export const TicketDetailView = () => {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
       } else { setError(data.error || 'Fehler beim Speichern.'); }
+    } catch { setError('Netzwerkfehler.'); } finally { setSaving(false); }
+  };
+
+  const handleTakeOver = async () => {
+    if (!currentUser?.id) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/tickets/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assignee_id: currentUser.id, status: 'in_progress' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTicket(data.data);
+        setAssigneeId(currentUser.id);
+        setStatus('in_progress');
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2500);
+      } else { setError(data.error || 'Fehler beim Übernehmen.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setSaving(false); }
   };
 
@@ -328,9 +360,27 @@ export const TicketDetailView = () => {
                   {Object.entries(PRIORITIES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                 </select>
               </div>
-              <button className="btn-primary" style={{ width: '100%', padding: '10px', marginTop: 4 }} onClick={handleSave} disabled={saving}>
-                {saving ? 'Speichern...' : '✓ Änderungen speichern'}
-              </button>
+              {isAdminOrManager && (
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>Zuständig</label>
+                  <select style={{ ...selectStyle, width: '100%' }} value={assigneeId} onChange={e => setAssigneeId(e.target.value)}>
+                    <option value="">Nicht zugewiesen</option>
+                    {users.filter(u => ['admin', 'manager', 'employee'].includes((u as any).role)).map(u => (
+                      <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                <button className="btn-primary" style={{ width: '100%', padding: '10px' }} onClick={handleSave} disabled={saving}>
+                  {saving ? 'Speichern...' : '✓ Änderungen speichern'}
+                </button>
+                {ticket.status === 'new' && !ticket.assignee_id && currentUser?.role !== 'customer' && (
+                  <button className="btn-secondary" style={{ width: '100%', padding: '10px' }} onClick={handleTakeOver} disabled={saving}>
+                    ✋ Ticket übernehmen
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -341,7 +391,18 @@ export const TicketDetailView = () => {
               <span className="badge info" style={{ fontSize: 12 }}>{ticket.type}</span>
             </InfoRow>
             <InfoRow icon={<Building2 size={14} />} label="Firma">
-              {ticket.company_name || <span style={{ color: 'var(--color-text-muted)' }}>–</span>}
+              {ticket.company_id ? (
+                <span 
+                  onClick={() => navigate(`/customers/${ticket.company_id}`)}
+                  style={{ color: 'var(--color-primary)', cursor: 'pointer', fontWeight: 600 }}
+                  onMouseOver={e => (e.currentTarget.style.textDecoration = 'underline')}
+                  onMouseOut={e => (e.currentTarget.style.textDecoration = 'none')}
+                >
+                  {ticket.company_name}
+                </span>
+              ) : (
+                <span style={{ color: 'var(--color-text-muted)' }}>–</span>
+              )}
             </InfoRow>
             <InfoRow icon={<User size={14} />} label="Zugewiesen an">
               {ticket.assignee_first_name
