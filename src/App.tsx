@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen } from 'lucide-react';
+import { Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft, Bell, Search, UserCheck, FolderOpen, ShieldCheck } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
 import { TicketDetailView } from './pages/TicketDetailView';
@@ -10,6 +10,7 @@ import { CustomerDetailView } from './pages/CustomerDetailView';
 import { ProjectsView } from './pages/ProjectsView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
+import { UsersView } from './pages/UsersView';
 import { LoginView } from './pages/LoginView';
 import { GlobalLoginView } from './pages/GlobalLoginView';
 import { getUser, clearAuth } from './utils/auth';
@@ -93,7 +94,8 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean, onLogout: ()
     </nav>
     
     <div style={{ padding: isCollapsed ? '24px 8px' : '24px 16px', borderTop: '1px solid var(--color-border)' }}>
-      <NavItem to="/settings" icon={Settings} label="Settings" isCollapsed={isCollapsed} />
+      <NavItem to="/settings" icon={Settings} label="Einstellungen" isCollapsed={isCollapsed} />
+      <NavItem to="/users" icon={ShieldCheck} label="Benutzer" isCollapsed={isCollapsed} />
       <button 
         onClick={onLogout}
         style={{ 
@@ -206,6 +208,7 @@ const App = () => {
                   <Route path="/contacts" element={<ContactsView />} />
                   <Route path="/quotes" element={<QuotesView />} />
                   <Route path="/settings" element={<SettingsView />} />
+                  <Route path="/users" element={<UsersView />} />
                 </Routes>
               </div>
             </main>

@@ -75,6 +75,63 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
   }
 });
 
+// ─── User Management Routes ───────────────────────────────────────────────────
+app.get('/api/users', async (req: express.Request, res: express.Response) => {
+  try {
+    const result = await pool.query(`SELECT id, tenant_id, first_name, last_name, email, role, is_active, created_at, updated_at FROM users ORDER BY created_at DESC`);
+    res.status(200).json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching users' });
+  }
+});
+
+app.post('/api/users', async (req: express.Request, res: express.Response) => {
+  const { tenant_id, first_name, last_name, email, role, password } = req.body;
+  if (!tenant_id || !first_name || !last_name || !email || !password) {
+    return res.status(400).json({ success: false, error: 'Alle Pflichtfelder sind erforderlich.' });
+  }
+  try {
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rowCount && existing.rowCount > 0) {
+      return res.status(409).json({ success: false, error: 'E-Mail wird bereits verwendet.' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO users (tenant_id, first_name, last_name, email, password_hash, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id, email, first_name, last_name, role, is_active, created_at`,
+      [tenant_id, first_name, last_name, email, passwordHash, role || 'employee']
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ success: false, error: 'Server error creating user' });
+  }
+});
+
+app.patch('/api/users/:id', async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { role, is_active, first_name, last_name } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE users SET
+        role = COALESCE($1, role),
+        is_active = COALESCE($2, is_active),
+        first_name = COALESCE($3, first_name),
+        last_name = COALESCE($4, last_name),
+        updated_at = NOW()
+       WHERE id = $5
+       RETURNING id, email, first_name, last_name, role, is_active, updated_at`,
+      [role, is_active, first_name, last_name, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    res.status(200).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ success: false, error: 'Server error updating user' });
+  }
+});
+
 // Dashboard Metrics Route
 app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Response) => {
   try {
