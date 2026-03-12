@@ -320,20 +320,12 @@ CREATE TABLE IF NOT EXISTS customer_timeline_events (
 );
 
 -- 11. SUPABASE RLS (ROW LEVEL SECURITY) SETUP
--- Dies ist eine best practice für Supabase. 
--- Da dein Backend-Server (Express) die Zugriffe regelt, aktivieren wir RLS
--- mit einer Policy, die vollen Zugriff für authentifizierte Rollen (wie den Backend-Server) erlaubt.
--- Wenn du Supabase auth direkt aus dem Frontend nutzen willst, müsstest du diese Policies feiner granulieren.
-
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 
--- Erlaube vollen Zugriff für den "Service Role" Token (wird in Backend-Servern verwendet)
--- und vollen Zugriff für alle Operationen per Default (Damit deine bestehende DB-Logik weiterläuft).
--- ACHTUNG: Wenn Supabase direkt vom Frontend gelesen wird, diese Policies restriktiver machen!
 CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON tenants FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON users FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON companies FOR ALL USING (true) WITH CHECK (true);
@@ -348,7 +340,7 @@ DECLARE
 BEGIN
     INSERT INTO tenants (name, domain) 
     VALUES ('Vierkorken', 'vierkorken.ch') 
-    ON CONFLICT DO NOTHING;
+    ON CONFLICT (id) DO NOTHING;
     
     SELECT id INTO vierkorken_tenant_id FROM tenants WHERE name = 'Vierkorken' LIMIT 1;
 
