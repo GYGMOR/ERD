@@ -39,6 +39,17 @@ export interface Ticket {
   updated_at: string;
 }
 
+export interface LineItem {
+  id?: string;
+  product_id?: string;
+  title: string;
+  description?: string;
+  quantity: number;
+  unit_price: number;
+  tax_rate: number;
+  total_price: number;
+}
+
 export interface Invoice {
   id: string;
   tenant_id: string;
@@ -47,6 +58,7 @@ export interface Invoice {
   title: string;
   amount: string;
   status: string;
+  items?: LineItem[];
   due_date: string | null;
   issue_date: string | null;
   created_at: string;
@@ -123,6 +135,7 @@ export interface Contract {
   company_name: string | null;
   contact_id: string | null;
   assigned_to: string | null;
+  items?: LineItem[];
   start_date: string | null;
   end_date: string | null;
   notice_period_days: number | null;

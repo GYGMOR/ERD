@@ -201,7 +201,7 @@ export const NewsletterView = () => {
                   rows={6}
                   style={{ resize: 'vertical' }}
                   placeholder="Schreiben Sie hier Ihren Newsletter-Inhalt..."
-                  value={newCampaign.content}
+                  value={newCampaign.content || ''}
                   onChange={(e) => setNewCampaign({ ...newCampaign, content: e.target.value })}
                 />
                 <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>

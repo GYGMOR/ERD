@@ -62,8 +62,8 @@ export const LineItemEditor = ({ items, onChange }: LineItemEditorProps) => {
     updateItem(index, {
       product_id: product.id,
       title: product.name,
-      unit_price: parseFloat(product.price),
-      tax_rate: parseFloat(product.tax_rate),
+      unit_price: parseFloat(product.price || '0'),
+      tax_rate: parseFloat(product.tax_rate || '0'),
       description: product.description || ''
     });
     setShowProductPicker(null);

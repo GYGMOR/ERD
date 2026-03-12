@@ -169,7 +169,7 @@ export const ProductsView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    value={newProd.sku}
+                    value={newProd.sku || ''}
                     onChange={(e) => setNewProd({ ...newProd, sku: e.target.value })}
                   />
                 </div>
@@ -178,7 +178,7 @@ export const ProductsView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    value={newProd.category}
+                    value={newProd.category || ''}
                     onChange={(e) => setNewProd({ ...newProd, category: e.target.value })}
                   />
                 </div>
@@ -201,7 +201,7 @@ export const ProductsView = () => {
                     type="number"
                     step="0.1"
                     className="input-field"
-                    value={newProd.tax_rate}
+                    value={newProd.tax_rate || ''}
                     onChange={(e) => setNewProd({ ...newProd, tax_rate: e.target.value })}
                   />
                 </div>
@@ -210,7 +210,7 @@ export const ProductsView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    value={newProd.unit}
+                    value={newProd.unit || ''}
                     onChange={(e) => setNewProd({ ...newProd, unit: e.target.value })}
                   />
                 </div>
@@ -221,7 +221,7 @@ export const ProductsView = () => {
                   className="input-field"
                   rows={2}
                   style={{ resize: 'vertical' }}
-                  value={newProd.description}
+                  value={newProd.description || ''}
                   onChange={(e) => setNewProd({ ...newProd, description: e.target.value })}
                 />
               </div>

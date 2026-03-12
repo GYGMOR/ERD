@@ -1,4 +1,4 @@
-import { X, Printer, FileText, Calendar, Clock, DollarSign } from 'lucide-react';
+import { X, Printer, FileText } from 'lucide-react';
 import type { Contract } from '../types/entities';
 
 interface ContractPreviewModalProps {

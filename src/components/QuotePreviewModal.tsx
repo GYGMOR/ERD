@@ -15,8 +15,8 @@ export const QuotePreviewModal = ({ quote, onClose }: QuotePreviewModalProps) =>
     }
 
     // Calculate totals
-    const subtotal = (quote.items || []).reduce((sum, item) => sum + (parseFloat(item.total_price as any) || 0), 0);
-    const tax = (quote.items || []).reduce((sum, item) => sum + ((parseFloat(item.total_price as any) || 0) * (parseFloat(item.tax_rate as any) || 8.1) / 100), 0);
+    const subtotal = (quote.items || []).reduce((sum: number, item: any) => sum + (parseFloat(item.total_price as any) || 0), 0);
+    const tax = (quote.items || []).reduce((sum: number, item: any) => sum + ((parseFloat(item.total_price as any) || 0) * (parseFloat(item.tax_rate as any) || 8.1) / 100), 0);
     const total = subtotal + tax;
 
     const itemsHtml = (quote.items || []).map(item => `
@@ -216,7 +216,7 @@ export const QuotePreviewModal = ({ quote, onClose }: QuotePreviewModalProps) =>
                   <tr>
                     <td colSpan={4} style={{ padding: '24px 0', textAlign: 'center', color: '#666' }}>Keine Positionen definiert</td>
                   </tr>
-                ) : quote.items.map((item: any, idx: number) => (
+                ) : quote.items?.map((item: any, idx: number) => (
                   <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
                     <td style={{ padding: '16px 0' }}>
                       <div style={{ fontWeight: 600 }}>{item.title}</div>

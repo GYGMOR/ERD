@@ -1,14 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Info, Send, ShieldQuestion } from 'lucide-react';
-import { getUser } from '../../utils/auth';
 
 export const NewTicket = () => {
   const navigate = useNavigate();
-  // user is needed if we want to pre-fill or check something, 
-  // but currently we just use the token on the backend.
-  // I'll keep it if I use it for something, but for now I'll just remove the unused warning.
-  const _user = getUser(); 
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     title: '',

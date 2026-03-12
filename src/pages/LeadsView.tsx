@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Target, Plus, Search, MoreVertical, LayoutGrid, List, Phone, Mail, Globe, Filter, ArrowRight } from 'lucide-react';
+import { Target, Plus, Search, MoreVertical, LayoutGrid, List, Phone, Mail, Globe, Filter, ArrowRight, UserCheck } from 'lucide-react';
 import { getTenantId, getUser } from '../utils/auth';
 import type { Lead } from '../types/entities';
 
@@ -248,7 +248,7 @@ export const LeadsView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    value={newLead.industry}
+                    value={newLead.industry || ''}
                     onChange={(e) => setNewLead({ ...newLead, industry: e.target.value })}
                   />
                 </div>
@@ -259,7 +259,7 @@ export const LeadsView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    value={newLead.contact_name}
+                    value={newLead.contact_name || ''}
                     onChange={(e) => setNewLead({ ...newLead, contact_name: e.target.value })}
                   />
                 </div>
@@ -268,7 +268,7 @@ export const LeadsView = () => {
                   <input
                     type="email"
                     className="input-field"
-                    value={newLead.contact_email}
+                    value={newLead.contact_email || ''}
                     onChange={(e) => setNewLead({ ...newLead, contact_email: e.target.value })}
                   />
                 </div>
@@ -279,7 +279,7 @@ export const LeadsView = () => {
                   className="input-field"
                   rows={3}
                   style={{ resize: 'vertical' }}
-                  value={newLead.notes}
+                  value={newLead.notes || ''}
                   onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })}
                 />
               </div>
