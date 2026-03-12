@@ -159,7 +159,7 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
               <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
               <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
             </svg>
-            Mit Microsoft (Azure AD) anmelden
+            Mit Microsoft anmelden
           </button>
 
           <p style={{ textAlign: 'center', marginTop: '32px', fontSize: '13px', color: 'var(--color-text-muted)' }}>
