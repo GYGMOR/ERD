@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { UserPlus, Mail, Phone, Building2 } from 'lucide-react';
 import { NewContactModal } from '../components/NewContactModal';
+import { dataService } from '../services/dataService';
 import type { Contact } from '../types/entities';
 
 const getInitials = (first: string, last: string) =>
@@ -30,9 +31,14 @@ export const ContactsView = () => {
 
   const fetchContacts = async () => {
     try {
-      const res = await fetch('/api/contacts');
-      const data = await res.json();
-      if (data.success) setContacts(data.data);
+      const res = await dataService.getContacts();
+      if (res.success) {
+        const mapped = (res.data || []).map((c: any) => ({
+          ...c,
+          company_name: c.company?.name || ''
+        }));
+        setContacts(mapped);
+      }
     } catch (err) {
       console.error('Error fetching contacts:', err);
     } finally {

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, CheckCircle, Clock, AlertCircle, Building2, User, Tag, Calendar, Send, Lock } from 'lucide-react';
 import { getUser } from '../utils/auth';
+import { dataService } from '../services/dataService';
 import type { Ticket } from '../types/entities';
 
 interface Comment {
@@ -120,26 +121,44 @@ export const TicketDetailView = () => {
   useEffect(() => {
     const fetchAll = async () => {
       try {
-        const [ticketRes, commentsRes, usersRes] = await Promise.all([
-          fetch(`/api/tickets/${id}`),
-          fetch(`/api/tickets/${id}/comments`),
-          fetch('/api/users'),
+        setLoading(true);
+        const [ticketRes, usersRes] = await Promise.all([
+          dataService.getTicketById(id!),
+          dataService.getUsers(),
         ]);
-        const [ticketData, commentsData, usersData] = await Promise.all([
-          ticketRes.json(), 
-          commentsRes.json(),
-          usersRes.json()
-        ]);
-        if (ticketData.success) {
-          setTicket(ticketData.data);
-          setStatus(ticketData.data.status);
-          setPriority(ticketData.data.priority);
-          setAssigneeId(ticketData.data.assignee_id || '');
+        
+        if (ticketRes.success && ticketRes.data) {
+          const t = ticketRes.data;
+          // Map nested objects to flat structure for the existing UI
+          const mappedTicket = {
+            ...t,
+            company_name: t.company?.name || '',
+            assignee_first_name: t.assignee?.first_name || '',
+            assignee_last_name: t.assignee?.last_name || '',
+            customer_first_name: t.customer?.first_name || '',
+            customer_last_name: t.customer?.last_name || '',
+          };
+          setTicket(mappedTicket);
+          setStatus(t.status);
+          setPriority(t.priority);
+          setAssigneeId(t.assignee_id || '');
+          
+          if (t.messages) {
+            const mappedComments = t.messages.map((m: any) => ({
+              ...m,
+              first_name: m.sender?.first_name || 'System',
+              last_name: m.sender?.last_name || '',
+              role: m.sender?.role || 'system'
+            }));
+            setComments(mappedComments);
+          }
         } else { setError('Ticket nicht gefunden.'); }
-        if (commentsData.success) setComments(commentsData.data);
-        if (usersData.success) setUsers(usersData.data);
-      } catch { setError('Netzwerkfehler.'); }
-      finally { setLoading(false); }
+        
+        if (usersRes.success) setUsers(usersRes.data || []);
+      } catch (err) { 
+        console.error(err);
+        setError('Netzwerkfehler.'); 
+      } finally { setLoading(false); }
     };
     fetchAll();
   }, [id]);
@@ -153,17 +172,15 @@ export const TicketDetailView = () => {
     if (!ticket) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/tickets/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, priority, assignee_id: assigneeId === '' ? null : assigneeId }),
+      const res = await dataService.updateTicket(id!, { 
+        status, 
+        priority, 
+        assignee_id: assigneeId === '' ? null : assigneeId 
       });
-      const data = await res.json();
-      if (data.success) {
-        setTicket(data.data);
+      if (res.success) {
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
-      } else { setError(data.error || 'Fehler beim Speichern.'); }
+      } else { setError(res.error || 'Fehler beim Speichern.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setSaving(false); }
   };
 
@@ -171,19 +188,16 @@ export const TicketDetailView = () => {
     if (!currentUser?.id) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/tickets/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignee_id: currentUser.id, status: 'in_progress' }),
+      const res = await dataService.updateTicket(id!, { 
+        assignee_id: currentUser.id, 
+        status: 'in_progress' 
       });
-      const data = await res.json();
-      if (data.success) {
-        setTicket(data.data);
+      if (res.success) {
         setAssigneeId(currentUser.id);
         setStatus('in_progress');
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 2500);
-      } else { setError(data.error || 'Fehler beim Übernehmen.'); }
+      } else { setError(res.error || 'Fehler beim Übernehmen.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setSaving(false); }
   };
 
@@ -194,17 +208,23 @@ export const TicketDetailView = () => {
     setSubmittingComment(true);
     setCommentError('');
     try {
-      const res = await fetch(`/api/tickets/${id}/comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id, body: commentBody.trim(), is_internal: isInternal }),
+      const res = await dataService.addTicketMessage({
+        ticket_id: id,
+        sender_id: currentUser.id,
+        message: commentBody.trim(),
+        is_internal: isInternal
       });
-      const data = await res.json();
-      if (data.success) {
-        setComments(prev => [...prev, data.data]);
+      if (res.success && res.data) {
+        const newCM = {
+          ...res.data,
+          first_name: currentUser.firstName || '',
+          last_name: currentUser.lastName || '',
+          role: currentUser.role || ''
+        };
+        setComments(prev => [...prev, newCM]);
         setCommentBody('');
         setIsInternal(false);
-      } else { setCommentError(data.error || 'Fehler beim Senden.'); }
+      } else { setCommentError(res.error || 'Fehler beim Senden.'); }
     } catch { setCommentError('Netzwerkfehler.'); } finally { setSubmittingComment(false); }
   };
 

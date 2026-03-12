@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { getUser } from '../utils/auth';
 import type { Notification } from '../types/entities';
+import { dataService } from '../services/dataService';
+import { supabase } from '../utils/supabaseClient';
 
 export const NotificationCenter = () => {
   const [open, setOpen] = useState(false);
@@ -20,10 +22,9 @@ export const NotificationCenter = () => {
     if (!user) return;
     try {
       setLoading(true);
-      const res = await fetch(`/api/notifications?userId=${user.id}&role=${user.role}`);
-      const data = await res.json();
-      if (data.success) {
-        setNotifications(data.data);
+      const res = await dataService.getNotifications(user.id, user.role);
+      if (res.success) {
+        setNotifications(res.data || []);
       }
     } catch (err) {
       console.error('Failed to fetch notifications', err);
@@ -50,8 +51,10 @@ export const NotificationCenter = () => {
 
   const markAsRead = async (id: string) => {
     try {
-      await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' });
-      setNotifications(prev => prev.filter(n => n.id !== id));
+      const res = await dataService.markNotificationAsRead(id);
+      if (res.success) {
+        setNotifications(prev => prev.filter(n => n.id !== id));
+      }
     } catch (err) {
       console.error('Failed to mark notification as read', err);
     }
@@ -60,11 +63,10 @@ export const NotificationCenter = () => {
   const markAllRead = async () => {
     if (!user) return;
     try {
-      await fetch('/api/notifications/read-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: user.id, role: user.role })
-      });
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .or(`user_id.eq.${user.id},target_role.eq.${user.role}`);
       setNotifications([]);
     } catch (err) {
       console.error('Failed to mark all as read', err);

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { getTenantId } from '../utils/auth';
+import { dataService } from '../services/dataService';
+import { supabase } from '../utils/supabaseClient';
 import type { Company } from '../types/entities';
 
 interface NewContactModalProps {
@@ -34,9 +36,9 @@ export const NewContactModal = ({ onClose, onSave }: NewContactModalProps) => {
 
   // Fetch companies once on mount
   useEffect(() => {
-    fetch('/api/companies')
-      .then(r => r.json())
-      .then(d => { if (d.success) setCompanies(d.data); });
+    dataService.getCompanies().then(res => {
+      if (res.success) setCompanies(res.data || []);
+    });
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -46,14 +48,11 @@ export const NewContactModal = ({ onClose, onSave }: NewContactModalProps) => {
     const tenantId = getTenantId();
     if (!tenantId) { setError('Kein Tenant. Bitte neu einloggen.'); setLoading(false); return; }
     try {
-      const res = await fetch('/api/contacts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, tenant_id: tenantId, company_id: formData.company_id || null }),
-      });
-      const data = await res.json();
-      if (data.success) { onSave(); }
-      else { setError(data.error || 'Fehler beim Erstellen.'); }
+      const { error } = await supabase
+        .from('contacts')
+        .insert([{ ...formData, tenant_id: tenantId, company_id: formData.company_id || null }]);
+      if (!error) { onSave(); }
+      else { setError(error.message || 'Fehler beim Erstellen.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setLoading(false); }
   };
 

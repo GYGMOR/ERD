@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Search, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { NewCustomerModal } from '../components/NewCustomerModal';
+import { dataService } from '../services/dataService';
 import type { Company } from '../types/entities';
 
 export const CustomersView = () => {
@@ -12,10 +13,9 @@ export const CustomersView = () => {
 
   const fetchCustomers = async () => {
     try {
-      const res = await fetch('/api/companies');
-      const data = await res.json();
-      if (data.success) {
-        setCustomers(data.data);
+      const res = await dataService.getCompanies();
+      if (res.success) {
+        setCustomers(res.data || []);
       }
     } catch (err) {
       console.error('Error fetching customers:', err);

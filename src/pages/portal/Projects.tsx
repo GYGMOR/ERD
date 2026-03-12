@@ -1,23 +1,22 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Calendar, Clock, ArrowRight, Activity, Files } from 'lucide-react';
+import { supabase } from '../../utils/supabaseClient';
 
 export const Projects = () => {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState([]);
+  const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/projects', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setProjects(data.data);
-        }
+        const { data, error } = await supabase
+          .from('projects')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && data) setProjects(data);
       } catch (err) {
         console.error('Failed to fetch projects', err);
       } finally {

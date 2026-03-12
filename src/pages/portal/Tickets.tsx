@@ -1,24 +1,28 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Ticket, Plus, Search, Filter, MessageSquare, Clock, AlertCircle } from 'lucide-react';
+import { supabase } from '../../utils/supabaseClient';
+import { getUser } from '../../utils/auth';
 
 export const Tickets = () => {
   const navigate = useNavigate();
-  const [tickets, setTickets] = useState([]);
+  const [tickets, setTickets] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     const fetchTickets = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/tickets', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setTickets(data.data);
-        }
+        const user = getUser();
+        if (!user?.id) { setLoading(false); return; }
+
+        const { data, error } = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('customer_id', user.id)
+          .order('created_at', { ascending: false });
+
+        if (!error && data) setTickets(data);
       } catch (err) {
         console.error('Failed to fetch tickets', err);
       } finally {

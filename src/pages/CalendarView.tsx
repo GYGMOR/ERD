@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { 
-  ChevronLeft, ChevronRight, Plus, 
+import { ChevronLeft, ChevronRight, Plus, 
   Clock, RefreshCw
 } from 'lucide-react';
 import { EventModal } from '../components/EventModal';
+import { supabase } from '../utils/supabaseClient';
+import { getTenantId } from '../utils/auth';
 
 const SectionHeader = ({ title }: { title: string }) => (
   <h4 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.05em', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -212,12 +213,13 @@ export const CalendarView = () => {
 
   const fetchEvents = async () => {
     try {
-      const res = await fetch('/api/calendar/events', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      if (data.success) {
-        setEvents(data.data.map((e: any) => ({ ...e, start: new Date(e.start_time), end: new Date(e.end_time) })));
+      const { data, error } = await supabase
+        .from('calendar_events')
+        .select('*')
+        .order('start_time', { ascending: true });
+      
+      if (!error && data) {
+        setEvents(data.map((e: any) => ({ ...e, start: new Date(e.start_time), end: new Date(e.end_time) })));
       }
     } catch (e) {
       console.error('Failed to fetch events', e);
@@ -247,27 +249,25 @@ export const CalendarView = () => {
     }
     
     try {
-      const url = editingEvent ? `/api/calendar/events/${editingEvent.id}` : '/api/calendar/events';
-      const method = editingEvent ? 'PATCH' : 'POST';
+      const tenantId = getTenantId();
+      const eventPayload = { 
+        ...eventData, 
+        tenant_id: tenantId,
+        start_time: (eventData.start instanceof Date ? eventData.start : new Date(eventData.start)).toISOString(), 
+        end_time: (eventData.end instanceof Date ? eventData.end : new Date(eventData.end)).toISOString(),
+        availability_status: eventData.availabilityStatus || 'busy',
+        is_private: eventData.isPrivate || false,
+        reminder_minutes: eventData.reminderMinutes || null
+      };
 
-      const res = await fetch(url, {
-        method,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        },
-        body: JSON.stringify({ 
-          ...eventData, 
-          start_time: (eventData.start instanceof Date ? eventData.start : new Date(eventData.start)).toISOString(), 
-          end_time: (eventData.end instanceof Date ? eventData.end : new Date(eventData.end)).toISOString(),
-          availability_status: eventData.availabilityStatus || 'busy',
-          is_private: eventData.isPrivate || false,
-          reminder_minutes: eventData.reminderMinutes || null
-        })
-      });
+      let error;
+      if (editingEvent) {
+        ({ error } = await supabase.from('calendar_events').update(eventPayload).eq('id', editingEvent.id));
+      } else {
+        ({ error } = await supabase.from('calendar_events').insert([eventPayload]));
+      }
 
-      const data = await res.json();
-      if (data.success) {
+      if (!error) {
         setSaveStatus({ type: 'success', msg: 'Termin erfolgreich gespeichert!' });
         fetchEvents();
         setTimeout(() => {
@@ -277,7 +277,7 @@ export const CalendarView = () => {
             setSaveStatus(null);
         }, 1000);
       } else {
-        setSaveStatus({ type: 'error', msg: data.error || 'Fehler beim Speichern.' });
+        setSaveStatus({ type: 'error', msg: error.message || 'Fehler beim Speichern.' });
       }
     } catch (e) {
       console.error(e);

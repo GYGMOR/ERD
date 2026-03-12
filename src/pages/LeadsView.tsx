@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Target, Plus, Search, MoreVertical, LayoutGrid, List, Phone, Mail, Globe, Filter, ArrowRight, UserCheck } from 'lucide-react';
 import { getTenantId, getUser } from '../utils/auth';
+import { dataService } from '../services/dataService';
+import { supabase } from '../utils/supabaseClient';
 import type { Lead } from '../types/entities';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -31,9 +33,8 @@ export const LeadsView = () => {
 
   const fetchLeads = async () => {
     try {
-      const res = await fetch('/api/leads');
-      const data = await res.json();
-      if (data.success) setLeads(data.data);
+      const res = await dataService.getLeads();
+      if (res.success) setLeads(res.data || []);
     } catch (err) {
       console.error('Error fetching leads:', err);
     } finally {
@@ -48,20 +49,14 @@ export const LeadsView = () => {
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLead.company_name) return;
-
     try {
-      const res = await fetch('/api/leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newLead,
-          tenant_id: tenantId,
-          assigned_to: currentUser?.id,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setLeads([data.data, ...leads]);
+      const { data, error } = await supabase
+        .from('leads')
+        .insert([{ ...newLead, tenant_id: tenantId, assigned_to: currentUser?.id }])
+        .select()
+        .single();
+      if (!error && data) {
+        setLeads([data, ...leads]);
         setShowModal(false);
         setNewLead({ status: 'new', company_name: '', contact_name: '', contact_email: '', industry: '' });
       }
@@ -72,13 +67,11 @@ export const LeadsView = () => {
 
   const updateLeadStatus = async (id: string, newStatus: string) => {
     try {
-      const res = await fetch(`/api/leads/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const { error } = await supabase
+        .from('leads')
+        .update({ status: newStatus })
+        .eq('id', id);
+      if (!error) {
         setLeads(leads.map(l => (l.id === id ? { ...l, status: newStatus } : l)));
       }
     } catch (err) {

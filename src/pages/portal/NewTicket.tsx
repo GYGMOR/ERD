@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Info, Send, ShieldQuestion } from 'lucide-react';
+import { supabase } from '../../utils/supabaseClient';
+import { getUser, getTenantId } from '../../utils/auth';
 
 export const NewTicket = () => {
   const navigate = useNavigate();
@@ -17,18 +19,21 @@ export const NewTicket = () => {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch('/api/portal/tickets', {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}` 
-        },
-        body: JSON.stringify(formData)
-      });
-      const data = await res.json();
-      if (data.success) {
-        navigate(`/portal/tickets/${data.data.id}`);
+      const user = getUser();
+      const tenantId = getTenantId();
+      const { data, error } = await supabase
+        .from('tickets')
+        .insert([{ 
+          ...formData,
+          customer_id: user?.id || null,
+          tenant_id: tenantId || null,
+          status: 'new'
+        }])
+        .select()
+        .single();
+
+      if (!error && data) {
+        navigate(`/portal/tickets/${data.id}`);
       }
     } catch (err) {
       console.error('Failed to create ticket', err);

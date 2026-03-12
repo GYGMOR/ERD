@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getTenantId } from '../utils/auth';
+import { getTenantId, getUser } from '../utils/auth';
+import { dataService } from '../services/dataService';
 import type { Company } from '../types/entities';
 import { X, Image as ImageIcon, FileText, UploadCloud } from 'lucide-react';
 
@@ -34,12 +35,9 @@ export const NewTicketModal = ({ onClose, onSave }: { onClose: () => void, onSav
   };
 
   useEffect(() => {
-    fetch('/api/companies')
-      .then(res => res.json())
-      .then(data => {
-        if(data.success) setCompanies(data.data);
-      })
-      .catch(console.error);
+    dataService.getCompanies().then(res => {
+      if (res.success) setCompanies(res.data || []);
+    }).catch(console.error);
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,6 +47,7 @@ export const NewTicketModal = ({ onClose, onSave }: { onClose: () => void, onSav
     
     try {
       const tenantId = getTenantId();
+      const currentUser = getUser();
       if (!tenantId) {
         setError('Kein Tenant gefunden. Bitte neu einloggen.');
         setLoading(false);
@@ -57,20 +56,15 @@ export const NewTicketModal = ({ onClose, onSave }: { onClose: () => void, onSav
       const payload = {
         ...formData,
         tenant_id: tenantId,
+        customer_id: currentUser?.id || null,
         company_id: formData.company_id || null
       };
 
-      const res = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      
-      const data = await res.json();
-      if (data.success) {
-        onSave(data.data);
+      const res = await dataService.createTicket(payload);
+      if (res.success) {
+        onSave(res.data);
       } else {
-        setError(data.error || 'Fehler beim Erstellen des Tickets.');
+        setError(res.error || 'Fehler beim Erstellen des Tickets.');
       }
     } catch {
       setError('Netzwerkfehler beim Speichern.');

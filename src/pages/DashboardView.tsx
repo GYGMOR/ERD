@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Ticket, TrendingUp, FolderOpen, Clock, AlertTriangle, Tag, Activity, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../utils/supabaseClient';
 import type { TimelineEvent } from '../types/entities';
 
 // ─── KPI Card ────────────────────────────────────────────────────────────────
@@ -35,14 +36,40 @@ export const DashboardView = () => {
   useEffect(() => {
     const fetchDashboard = async () => {
       try {
-        const [mRes, tRes] = await Promise.all([
-          fetch('/api/dashboard/metrics'),
-          fetch('/api/timeline?limit=5')
-        ]);
-        const mData = await mRes.json();
-        const tData = await tRes.json();
-        if (mData.success) setMetrics(prev => ({ ...prev, ...mData.metrics }));
-        if (tData.success) setTimeline(tData.data);
+        // Fetch ticket stats directly from Supabase
+        const { data: ticketData } = await supabase
+          .from('tickets')
+          .select('status, priority');
+
+        const { count: projectCount } = await supabase
+          .from('projects')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'active');
+
+        const { count: leadCount } = await supabase
+          .from('leads')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'new');
+
+        if (ticketData) {
+          const openTickets = ticketData.filter(t => !['closed', 'resolved'].includes(t.status)).length;
+          const criticalTickets = ticketData.filter(t => t.priority === 'critical' && !['closed', 'resolved'].includes(t.status)).length;
+          setMetrics(prev => ({
+            ...prev,
+            openTickets,
+            criticalTickets,
+            activeProjects: projectCount || 0,
+            newLeads: leadCount || 0
+          }));
+        }
+
+        // Live activity from customer_timeline_events (most recent 5)
+        const { data: tData } = await supabase
+          .from('customer_timeline_events')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(5);
+        if (tData) setTimeline(tData as any);
       } catch (err) {
         console.error('Dashboard load error:', err);
       } finally {

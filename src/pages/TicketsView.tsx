@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Ticket as TicketIcon, Search, X } from 'lucide-react';
 import { NewTicketModal } from '../components/NewTicketModal';
 import { getUser } from '../utils/auth';
+import { dataService } from '../services/dataService';
 import type { Ticket } from '../types/entities';
 
 const PRIORITY_CLS: Record<string, string> = { low: 'success', medium: 'info', high: 'warning', critical: 'danger' };
@@ -51,11 +52,18 @@ export const TicketsView = () => {
 
   const fetchTickets = async () => {
     try {
-      const res = await fetch('/api/tickets', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      if (data.success) setTickets(data.data);
+      setLoading(true);
+      const res = await dataService.getTickets();
+      if (res.success) {
+        // Map foreign key objects to the fields expected by the UI
+        const mappedData = (res.data || []).map((t: any) => ({
+          ...t,
+          company_name: t.company?.name || '',
+          assignee_first_name: t.assignee?.first_name || '',
+          assignee_last_name: t.assignee?.last_name || ''
+        }));
+        setTickets(mappedData);
+      }
     } catch (err) {
       console.error('Error fetching tickets:', err);
     } finally {
@@ -65,13 +73,10 @@ export const TicketsView = () => {
 
   const takeTicket = async (e: React.MouseEvent, ticketId: string) => {
     e.stopPropagation();
+    if (!currentUser) return;
     try {
-      const res = await fetch(`/api/tickets/${ticketId}/take`, {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      if (data.success) {
+      const res = await dataService.updateTicket(ticketId, { assignee_id: currentUser.id });
+      if (res.success) {
         fetchTickets();
       }
     } catch (err) {

@@ -1,21 +1,20 @@
 import { useState, useEffect } from 'react';
 import { FileSignature, Calendar, ShieldCheck, Download, Info, ExternalLink, Clock } from 'lucide-react';
+import { supabase } from '../../utils/supabaseClient';
 
 export const Contracts = () => {
-  const [contracts, setContracts] = useState([]);
+  const [contracts, setContracts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchContracts = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/contracts', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setContracts(data.data);
-        }
+        const { data, error } = await supabase
+          .from('contracts')
+          .select('*')
+          .eq('status', 'active')
+          .order('start_date', { ascending: false });
+        if (!error && data) setContracts(data);
       } catch (err) {
         console.error('Failed to fetch contracts', err);
       } finally {

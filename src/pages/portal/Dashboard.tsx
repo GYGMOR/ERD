@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Ticket, FolderOpen, FileText, CreditCard, FileSignature, Clock, ArrowRight, BookOpen, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { supabase } from '../../utils/supabaseClient';
+import { getUser } from '../../utils/auth';
 
 const PortalKpiCard = ({ title, value, icon: Icon, color, onClick }: any) => (
   <div 
@@ -43,14 +45,22 @@ export const Dashboard = () => {
   useEffect(() => {
     const fetchMetrics = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/dashboard', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setMetrics(data.data);
-        }
+        const user = getUser();
+        if (!user?.id) { setLoading(false); return; }
+
+        const [{ count: openTickets }, { count: activeProjects }] = await Promise.all([
+          supabase.from('tickets').select('*', { count: 'exact', head: true })
+            .eq('customer_id', user.id)
+            .not('status', 'in', '(closed,resolved)'),
+          supabase.from('projects').select('*', { count: 'exact', head: true })
+            .eq('status', 'active')
+        ]);
+
+        setMetrics(prev => ({
+          ...prev,
+          openTickets: openTickets || 0,
+          activeProjects: activeProjects || 0
+        }));
       } catch (err) {
         console.error('Failed to fetch portal metrics', err);
       } finally {

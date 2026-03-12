@@ -16,30 +16,19 @@ export const Profile = () => {
   });
 
   useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/profile', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setProfile(data.data);
-          setFormData({
-            firstName: data.data.first_name,
-            lastName: data.data.last_name,
-            email: data.data.email,
-            phone: data.data.contact?.phone || '',
-            position: data.data.contact?.position || ''
-          });
-        }
-      } catch (err) {
-        console.error('Failed to fetch profile', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchProfile();
+    // Use local user data from auth utility (populated on login)
+    const userData = getUser();
+    if (userData) {
+      setProfile(userData);
+      setFormData({
+        firstName: userData.firstName || '',
+        lastName: userData.lastName || '',
+        email: userData.email || '',
+        phone: '',
+        position: userData.role || ''
+      });
+    }
+    setLoading(false);
   }, []);
 
   const handleUpdate = async (e: React.FormEvent) => {

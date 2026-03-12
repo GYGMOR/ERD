@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { UserPlus, UserX, UserCheck, Search, X, SortAsc, SortDesc } from 'lucide-react';
 import { getTenantId } from '../utils/auth';
+import { dataService } from '../services/dataService';
 
 interface User {
   id: string;
@@ -39,14 +40,9 @@ const NewUserModal = ({ onClose, onSave }: { onClose: () => void; onSave: () => 
     const tenantId = getTenantId();
     if (!tenantId) { setError('Session abgelaufen.'); setLoading(false); return; }
     try {
-      const res = await fetch('/api/users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, tenant_id: tenantId }),
-      });
-      const data = await res.json();
-      if (data.success) { onSave(); }
-      else { setError(data.error || 'Fehler beim Erstellen.'); }
+      const res = await dataService.createUser({ ...form, tenant_id: tenantId });
+      if (res.success) { onSave(); }
+      else { setError(res.error || 'Fehler beim Erstellen.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setLoading(false); }
   };
 
@@ -116,9 +112,8 @@ export const UsersView = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/users');
-      const data = await res.json();
-      if (data.success) setUsers(data.data);
+      const res = await dataService.getUsers();
+      if (res.success) setUsers(res.data || []);
     } catch (err) { console.error(err); }
     finally { setLoading(false); }
   };
@@ -181,26 +176,16 @@ export const UsersView = () => {
   const toggleActive = async (user: User) => {
     setSaving(user.id);
     try {
-      const res = await fetch(`/api/users/${user.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ is_active: !user.is_active }),
-      });
-      const data = await res.json();
-      if (data.success) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !u.is_active } : u));
+      const res = await dataService.updateUser(user.id, { is_active: !user.is_active });
+      if (res.success) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, is_active: !u.is_active } : u));
     } catch { console.error('Failed to toggle user'); } finally { setSaving(null); }
   };
 
   const changeRole = async (user: User, role: string) => {
     setSaving(user.id);
     try {
-      const res = await fetch(`/api/users/${user.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role }),
-      });
-      const data = await res.json();
-      if (data.success) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, role } : u));
+      const res = await dataService.updateUser(user.id, { role });
+      if (res.success) setUsers(prev => prev.map(u => u.id === user.id ? { ...u, role } : u));
     } catch { console.error('Failed to change role'); } finally { setSaving(null); }
   };
 

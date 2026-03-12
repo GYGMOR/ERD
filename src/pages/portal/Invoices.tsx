@@ -1,21 +1,19 @@
 import { useState, useEffect } from 'react';
 import { CreditCard, Download, ExternalLink, Filter, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { supabase } from '../../utils/supabaseClient';
 
 export const Invoices = () => {
-  const [invoices, setInvoices] = useState([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchInvoices = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/portal/invoices', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.success) {
-          setInvoices(data.data);
-        }
+        const { data, error } = await supabase
+          .from('invoices')
+          .select('*')
+          .order('issue_date', { ascending: false });
+        if (!error && data) setInvoices(data);
       } catch (err) {
         console.error('Failed to fetch invoices', err);
       } finally {
