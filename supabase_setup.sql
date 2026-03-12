@@ -326,11 +326,30 @@ ALTER TABLE companies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tickets ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON tenants FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON users FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON companies FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON contacts FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON tickets FOR ALL USING (true) WITH CHECK (true);
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow all operations for everyone (Backend controlled)" ON tenants;
+    CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON tenants FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN NULL; END $$;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow all operations for everyone (Backend controlled)" ON users;
+    CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON users FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN NULL; END $$;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow all operations for everyone (Backend controlled)" ON companies;
+    CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON companies FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN NULL; END $$;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow all operations for everyone (Backend controlled)" ON contacts;
+    CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON contacts FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN NULL; END $$;
+
+DO $$ BEGIN
+    DROP POLICY IF EXISTS "Allow all operations for everyone (Backend controlled)" ON tickets;
+    CREATE POLICY "Allow all operations for everyone (Backend controlled)" ON tickets FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN others THEN NULL; END $$;
 
 
 -- 12. SEEDING (Admin Account)
@@ -340,7 +359,7 @@ DECLARE
 BEGIN
     INSERT INTO tenants (name, domain) 
     VALUES ('Vierkorken', 'vierkorken.ch') 
-    ON CONFLICT (id) DO NOTHING;
+    ON CONFLICT DO NOTHING;
     
     SELECT id INTO vierkorken_tenant_id FROM tenants WHERE name = 'Vierkorken' LIMIT 1;
 
