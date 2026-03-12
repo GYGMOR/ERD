@@ -44,6 +44,7 @@ import { Calendar as CustomerCalendar } from './pages/portal/Calendar';
 
 import { getUser, clearAuth, hasRole, isInternal } from './utils/auth';
 import type { UserRole } from './types/entities';
+import { supabase } from './utils/supabaseClient';
 
 // ─── Theme Toggle ─────────────────────────────────────────────────────────────
 const ThemeToggle = () => {
@@ -196,7 +197,7 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean; onLogout: ()
   );
 };
 
-// ─── Placeholder View (for modules not yet built) ─────────────────────────────
+// ─── Placeholder Module ───────────────────────────────────────────────────────
 const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.ElementType }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '50vh', gap: 12, color: 'var(--color-text-muted)' }}>
     <Icon size={40} strokeWidth={1.5} />
@@ -224,30 +225,35 @@ const AppChild = () => {
           console.log('MSAL Redirect Response received:', response);
           instance.setActiveAccount(response.account);
 
-          // Sync with NexService Backend
-          // Wir senden den Username (E-Mail) und die Azure ID an unser Backend
-          const syncRes = await fetch('/api/auth/msal-sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: response.account.username,
-              azure_ad_id: response.account.localAccountId,
-              firstName: response.account.idTokenClaims?.given_name || response.account.name?.split(' ')[0] || '',
-              lastName: response.account.idTokenClaims?.family_name || response.account.name?.split(' ').slice(1).join(' ') || ''
-            })
-          });
+          const email = response.account.username;
+          
+          // --- 1. Supabase-basierte Authentifizierung (statt /api) ---
+          const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('email', email)
+            .single();
 
-          const syncData = await syncRes.json();
-          if (syncData.success) {
-            localStorage.setItem('token', syncData.token);
-            localStorage.setItem('user', JSON.stringify(syncData.user));
-            setIsAuthenticated(true);
-            // URL bereinigen
-            window.location.hash = '#/'; 
-          } else {
-            console.error('MSAL Sync failed:', syncData.error);
-            alert('Synchronisierung fehlgeschlagen: ' + syncData.error);
+          if (userError || !user) {
+            console.error('User not found in Supabase:', userError);
+            alert('Kein NexService-Konto für ' + email + ' gefunden.');
+            setIsProcessingAuth(false);
+            return;
           }
+
+          // --- 2. Lokalen Status setzen ---
+          localStorage.setItem('token', 'dummy-token-for-ghpages'); 
+          localStorage.setItem('user', JSON.stringify({
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            tenant_id: user.tenant_id
+          }));
+
+          setIsAuthenticated(true);
+          window.location.hash = '#/'; 
         }
       } catch (err) {
         console.error('Error handling MSAL redirect:', err);
