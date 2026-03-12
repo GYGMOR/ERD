@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useMsal } from '@azure/msal-react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Home, Ticket, Calendar, FolderOpen, FileText, FileSignature, 
@@ -75,9 +76,13 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isCollapsed, setIsCollapsed] = useState(false);
   const user = getUser();
   
+  const { instance } = useMsal();
+  
   const handleLogout = () => {
     clearAuth();
-    window.location.href = '/ERD/login';
+    instance.logoutRedirect({
+      postLogoutRedirectUri: window.location.origin + window.location.pathname
+    }).catch(console.error);
   };
 
   const navItems = [

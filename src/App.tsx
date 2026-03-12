@@ -265,7 +265,12 @@ const AppChild = () => {
     handleRedirect();
   }, [instance]);
 
-  const handleLogout = () => { clearAuth(); setIsAuthenticated(false); };
+  const handleLogout = () => { 
+    clearAuth(); 
+    instance.logoutRedirect({
+      postLogoutRedirectUri: window.location.origin + window.location.pathname
+    }).catch(console.error);
+  };
 
   const isPortalPath = location.pathname.startsWith('/portal');
 
