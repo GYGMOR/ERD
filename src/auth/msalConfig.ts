@@ -5,8 +5,9 @@ export const msalConfig: Configuration = {
         // Will be populated from .env 
         clientId: import.meta.env.VITE_MSAL_CLIENT_ID || "deine-client-id-hier",
         authority: `https://login.microsoftonline.com/${import.meta.env.VITE_MSAL_TENANT_ID || "deine-tenant-id-hier"}`,
-        redirectUri: "/",
-        postLogoutRedirectUri: "/"
+        // Dynamische Erkennung der URL (wichtig für GitHub Pages Unterverzeichnisse wie /ERD/)
+        redirectUri: typeof window !== 'undefined' ? (window.location.origin + window.location.pathname) : "/",
+        postLogoutRedirectUri: typeof window !== 'undefined' ? (window.location.origin + window.location.pathname) : "/"
     },
     cache: {
         cacheLocation: "sessionStorage", // This configures where your cache will be stored
