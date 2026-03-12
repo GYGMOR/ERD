@@ -19,3 +19,8 @@ if (!supabaseUrl || !supabaseAnonKey) {
  * const { data, error } = await supabase.from('tickets').select('*');
  */
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+// Debug-Log für die Konsole (nur in Dev oder wenn Variablen da sind)
+if (supabaseUrl && supabaseUrl !== 'your-supabase-url.supabase.co') {
+  console.log('✅ Supabase Client initialisiert für:', supabaseUrl);
+}
