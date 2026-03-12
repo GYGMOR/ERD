@@ -3,7 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react
 import {
   Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft,
   Search, FolderOpen, UserCheck, ShieldCheck, Activity,
-  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard,
+  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard, Calendar
 } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
@@ -23,8 +23,24 @@ import { ProjectsView } from './pages/ProjectsView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
 import { UsersView } from './pages/UsersView';
-import { LoginView } from './pages/LoginView';
+import { CalendarView } from './pages/CalendarView';
 import { GlobalLoginView } from './pages/GlobalLoginView';
+import { ClientLoginView } from './pages/ClientLoginView';
+
+// --- Customer Portal Views ---
+import { CustomerLayout } from './layouts/CustomerLayout';
+import { Dashboard as CustomerDashboard } from './pages/portal/Dashboard';
+import { Tickets as CustomerTickets } from './pages/portal/Tickets';
+import { TicketDetail as CustomerTicketDetail } from './pages/portal/TicketDetail';
+import { NewTicket as CustomerNewTicket } from './pages/portal/NewTicket';
+import { Projects as CustomerProjects } from './pages/portal/Projects';
+import { Offers as CustomerOffers } from './pages/portal/Offers';
+import { Invoices as CustomerInvoices } from './pages/portal/Invoices';
+import { Contracts as CustomerContracts } from './pages/portal/Contracts';
+import { Documents as CustomerDocuments } from './pages/portal/Documents';
+import { Profile as CustomerProfile } from './pages/portal/Profile';
+import { Calendar as CustomerCalendar } from './pages/portal/Calendar';
+
 import { getUser, clearAuth, hasRole, isInternal } from './utils/auth';
 import type { UserRole } from './types/entities';
 
@@ -97,6 +113,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: '/', icon: Home, label: 'Dashboard' },
       { to: '/tickets', icon: Ticket, label: 'Tickets' },
+      { to: '/calendar', icon: Calendar, label: 'Kalender', roles: ['admin', 'manager', 'employee'] },
       { to: '/projects', icon: FolderOpen, label: 'Projekte', roles: ['admin', 'manager', 'employee'] },
       { to: '/knowledge', icon: BookOpen, label: 'Knowledge Base' },
     ],
@@ -188,103 +205,157 @@ const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.Element
 );
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
-const App = () => {
+const AppChild = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+  const location = useLocation();
   const currentUser = getUser();
 
   const handleLogout = () => { clearAuth(); setIsAuthenticated(false); };
 
+  const isPortalPath = location.pathname.startsWith('/portal');
+
   if (!isAuthenticated) {
+    if (isPortalPath) {
+      return <ClientLoginView onLogin={() => setIsAuthenticated(true)} />;
+    }
     return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
   }
 
+  const isCustomer = currentUser?.role === 'customer' || currentUser?.role === 'client';
+
+  // Redirect logic: if customer tries to access internal paths, or staff tries to access portal
+  if (isCustomer && !isPortalPath) {
+    // Should be in portal
+    return (
+      <CustomerLayout>
+        <Routes>
+          <Route path="/" element={<CustomerDashboard />} />
+          <Route path="/portal" element={<CustomerDashboard />} />
+          <Route path="/portal/tickets" element={<CustomerTickets />} />
+          <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
+          <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
+          <Route path="/portal/projects" element={<CustomerProjects />} />
+          <Route path="/portal/projects/:id" element={<Placeholder title="Projekt-Details" icon={FolderOpen} />} />
+          <Route path="/portal/offers" element={<CustomerOffers />} />
+          <Route path="/portal/invoices" element={<CustomerInvoices />} />
+          <Route path="/portal/contracts" element={<CustomerContracts />} />
+          <Route path="/portal/documents" element={<CustomerDocuments />} />
+          <Route path="/portal/profile" element={<CustomerProfile />} />
+          <Route path="/portal/calendar" element={<CustomerCalendar />} />
+          <Route path="*" element={<CustomerDashboard />} />
+        </Routes>
+      </CustomerLayout>
+    );
+  }
+
+  if (!isCustomer && isPortalPath) {
+     // Staff member in portal path? Show error or redirect to dashboard
+     window.location.href = '/ERD/';
+     return null;
+  }
+
+  if (isCustomer) {
+    return (
+      <CustomerLayout>
+        <Routes>
+          <Route path="/" element={<CustomerDashboard />} />
+          <Route path="/portal" element={<CustomerDashboard />} />
+          <Route path="/portal/tickets" element={<CustomerTickets />} />
+          <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
+          <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
+          <Route path="/portal/projects" element={<CustomerProjects />} />
+          <Route path="/portal/projects/:id" element={<Placeholder title="Projekt-Details" icon={FolderOpen} />} />
+          <Route path="/portal/offers" element={<CustomerOffers />} />
+          <Route path="/portal/invoices" element={<CustomerInvoices />} />
+          <Route path="/portal/contracts" element={<CustomerContracts />} />
+          <Route path="/portal/documents" element={<CustomerDocuments />} />
+          <Route path="/portal/profile" element={<CustomerProfile />} />
+          <Route path="/portal/calendar" element={<CustomerCalendar />} />
+          <Route path="*" element={<CustomerDashboard />} />
+        </Routes>
+      </CustomerLayout>
+    );
+  }
+
   return (
-    <Router basename="/ERD">
-      <Routes>
-        <Route path="/login" element={<LoginView />} />
-        <Route path="*" element={
-          <div className="app-container">
-            <Sidebar isCollapsed={isSidebarCollapsed} onLogout={handleLogout} />
+    <div className="app-container">
+      <Sidebar isCollapsed={isSidebarCollapsed} onLogout={handleLogout} />
 
-            <main className="main-content">
-              <header className="topbar">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <button
-                    onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
-                    aria-label="Toggle Sidebar"
-                  >
-                    {isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
-                  </button>
-                  <div style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
-                    <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-                    <input
-                      type="text"
-                      placeholder="Global search (Tickets, Projects...)"
-                      style={{
-                        padding: '6px 12px 6px 34px', borderRadius: 'var(--radius-pill)',
-                        border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)',
-                        color: 'var(--color-text-main)', width: '100%', outline: 'none', fontSize: 13,
-                        transition: 'all 0.2s ease',
-                      }}
-                      className="search-input-premium"
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <ThemeToggle />
-                  <NotificationCenter />
-                  <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
-                      <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
-                    </div>
-                    <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 12 }}>
-                      {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
-                    </div>
-                  </div>
-                </div>
-              </header>
-
-              <div className="content-area">
-                <Routes>
-                  {/* Service Hub */}
-                  <Route path="/" element={<DashboardView />} />
-                  <Route path="/tickets" element={<TicketsView />} />
-                  <Route path="/tickets/:id" element={<TicketDetailView />} />
-                  <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
-                  <Route path="/knowledge" element={<KnowledgeBaseView />} />
-
-                  {/* Sales & CRM */}
-                  <Route path="/customers" element={<CustomersView />} />
-                  <Route path="/customers/:id" element={<CustomerDetailView />} />
-                  <Route path="/contacts" element={<ContactsView />} />
-                  <Route path="/leads" element={<LeadsView />} />
-                  <Route path="/quotes" element={<QuotesView />} />
-                  <Route path="/invoices" element={<QuotesView />} />
-                  <Route path="/contracts" element={<ContractsView />} />
-                  <Route path="/products" element={<ProductsView />} />
-                  <Route path="/newsletter" element={<NewsletterView />} />
-
-                  {/* Finance */}
-                  <Route path="/accounting" element={hasRole('admin', 'manager') ? <AccountingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
-
-                  {/* Intern */}
-                  <Route path="/business-card" element={isInternal() ? <BusinessCardView /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
-                  <Route path="/timeline" element={isInternal() ? <CustomerTimelineView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
-                  <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />
-                  <Route path="/settings" element={<SettingsView />} />
-                </Routes>
-              </div>
-            </main>
+      <main className="main-content">
+        <header className="topbar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
+              aria-label="Toggle Sidebar"
+            >
+              {isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
+            </button>
+            <div style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
+              <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+              <input
+                type="text"
+                placeholder="Global search..."
+                style={{
+                  padding: '6px 12px 6px 34px', borderRadius: 'var(--radius-pill)',
+                  border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)',
+                  color: 'var(--color-text-main)', width: '100%', outline: 'none', fontSize: 13,
+                  transition: 'all 0.2s ease',
+                }}
+                className="search-input-premium"
+              />
+            </div>
           </div>
-        } />
-      </Routes>
-    </Router>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <ThemeToggle />
+            <NotificationCenter />
+            <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
+                <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
+              </div>
+              <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 12 }}>
+                {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="content-area">
+          <Routes>
+            <Route path="/" element={<DashboardView />} />
+            <Route path="/tickets" element={<TicketsView />} />
+            <Route path="/tickets/:id" element={<TicketDetailView />} />
+            <Route path="/calendar" element={isInternal() ? <CalendarView /> : <Placeholder title="Kein Zugriff" icon={Calendar} />} />
+            <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+            <Route path="/knowledge" element={<KnowledgeBaseView />} />
+            <Route path="/customers" element={<CustomersView />} />
+            <Route path="/customers/:id" element={<CustomerDetailView />} />
+            <Route path="/contacts" element={<ContactsView />} />
+            <Route path="/leads" element={<LeadsView />} />
+            <Route path="/quotes" element={<QuotesView />} />
+            <Route path="/contracts" element={<ContractsView />} />
+            <Route path="/products" element={<ProductsView />} />
+            <Route path="/newsletter" element={<NewsletterView />} />
+            <Route path="/accounting" element={hasRole('admin', 'manager') ? <AccountingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+            <Route path="/business-card" element={isInternal() ? <BusinessCardView /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
+            <Route path="/timeline" element={isInternal() ? <CustomerTimelineView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
+            <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />
+            <Route path="/settings" element={<SettingsView />} />
+          </Routes>
+        </div>
+      </main>
+    </div>
   );
 };
+
+const App = () => (
+  <Router basename="/ERD">
+    <AppChild />
+  </Router>
+);
 
 export default App;

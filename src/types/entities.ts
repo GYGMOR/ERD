@@ -242,4 +242,4 @@ export interface Notification {
   updated_at: string;
 }
 
-export type UserRole = 'admin' | 'manager' | 'employee' | 'customer';
+export type UserRole = 'admin' | 'manager' | 'employee' | 'customer' | 'client';

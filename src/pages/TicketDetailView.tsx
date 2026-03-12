@@ -7,13 +7,13 @@ import type { Ticket } from '../types/entities';
 interface Comment {
   id: string;
   ticket_id: string;
-  user_id: string;
-  body: string;
+  sender_id: string;
+  message: string;
   is_internal: boolean;
   created_at: string;
   first_name: string;
   last_name: string;
-  email: string;
+  role: string;
 }
 
 const PRIORITIES: Record<string, { label: string; cls: string }> = {
@@ -53,7 +53,7 @@ const InfoRow = ({ icon, label, children }: { icon: React.ReactNode; label: stri
 // ─── Comment Bubble ───────────────────────────────────────────────────────────
 const CommentBubble = ({ comment }: { comment: Comment }) => {
   const initials = `${(comment.first_name || '?').charAt(0)}${(comment.last_name || '').charAt(0)}`.toUpperCase();
-  const color = avatarColor(comment.user_id);
+  const color = avatarColor(comment.sender_id);
   const isInternal = comment.is_internal;
 
   return (
@@ -83,7 +83,7 @@ const CommentBubble = ({ comment }: { comment: Comment }) => {
           whiteSpace: 'pre-wrap',
           color: 'var(--color-text-main)',
         }}>
-          {comment.body}
+          {comment.message}
         </div>
       </div>
     </div>

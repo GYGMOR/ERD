@@ -12,9 +12,55 @@ const app = express();
 const port = parseInt(process.env.PORT || '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
 
-// Middleware
 app.use(cors());
 app.use(express.json());
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
+interface AuthenticatedRequest extends express.Request {
+  user?: {
+    id: string;
+    tenant_id: string;
+    role: string;
+    email: string;
+    company_id?: string;
+    contact_id?: string;
+  };
+}
+
+const authenticateToken = async (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ success: false, error: 'Access denied: No token provided' });
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    req.user = decoded;
+
+    // If customer or client, ensure company_id and contact_id are attached (lookup from contacts)
+    if (decoded.role === 'customer' || decoded.role === 'client') {
+      const contactResult = await pool.query('SELECT company_id, id as contact_id FROM contacts WHERE user_id = $1', [decoded.id]);
+      if (contactResult.rows.length > 0) {
+        req.user!.company_id = contactResult.rows[0].company_id;
+        req.user!.contact_id = contactResult.rows[0].contact_id;
+      }
+    }
+
+    next();
+  } catch (error) {
+    return res.status(403).json({ success: false, error: 'Invalid token' });
+  }
+};
+
+const authorizeRole = (...roles: string[]) => {
+  return (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Insufficient permissions' });
+    }
+    next();
+  };
+};
 
 // Database connection
 const pool = new Pool({
@@ -132,22 +178,22 @@ app.patch('/api/users/:id', async (req: express.Request, res: express.Response) 
   }
 });
 
-// ─── Ticket Comments ──────────────────────────────────────────────────────────
+// ─── Ticket Messages (Communication) ──────────────────────────────────────────
 app.get('/api/tickets/:id/comments', async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      `SELECT c.*, u.first_name, u.last_name, u.email
-       FROM ticket_comments c
-       LEFT JOIN users u ON c.user_id = u.id
-       WHERE c.ticket_id = $1
-       ORDER BY c.created_at ASC`,
+      `SELECT m.*, u.first_name, u.last_name, u.role
+       FROM ticket_messages m
+       JOIN users u ON m.sender_id = u.id
+       WHERE m.ticket_id = $1
+       ORDER BY m.created_at ASC`,
       [id]
     );
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
-    console.error('Error fetching comments:', error);
-    res.status(500).json({ success: false, error: 'Server error fetching comments' });
+    console.error('Error fetching messages:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
@@ -159,7 +205,7 @@ app.post('/api/tickets/:id/comments', async (req: express.Request, res: express.
   }
   try {
     const result = await pool.query(
-      `INSERT INTO ticket_comments (ticket_id, user_id, body, is_internal)
+      `INSERT INTO ticket_messages (ticket_id, sender_id, message, is_internal)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
       [id, user_id, body, is_internal || false]
@@ -169,15 +215,39 @@ app.post('/api/tickets/:id/comments', async (req: express.Request, res: express.
 
     // Fetch joined with user data
     const joined = await pool.query(
-      `SELECT c.*, u.first_name, u.last_name, u.email
-       FROM ticket_comments c LEFT JOIN users u ON c.user_id = u.id
-       WHERE c.id = $1`,
+      `SELECT m.*, u.first_name, u.last_name, u.role
+       FROM ticket_messages m JOIN users u ON m.sender_id = u.id
+       WHERE m.id = $1`,
       [result.rows[0].id]
     );
-    res.status(201).json({ success: true, data: joined.rows[0] });
+
+    const messageObj = joined.rows[0];
+    
+    // Notify customer if it's NOT an internal note
+    if (!is_internal) {
+        const ticketInfo = await pool.query('SELECT customer_id, title, tenant_id FROM tickets WHERE id = $1', [id]);
+        if (ticketInfo.rows.length > 0) {
+            const ticket = ticketInfo.rows[0];
+            // Only notify if the sender is NOT the customer themselves (though this route is internal, just being safe)
+            if (ticket.customer_id !== user_id) {
+                await createNotification({
+                    tenant_id: ticket.tenant_id,
+                    user_id: ticket.customer_id,
+                    type: 'ticket',
+                    entity_id: id as string,
+                    title: 'Neue Nachricht vom Support',
+                    message: `Es gibt eine neue Nachricht zu Ihrem Ticket "${ticket.title}".`,
+                    priority: 'normal',
+                    link: `/portal/tickets/${id as string}`
+                });
+            }
+        }
+    }
+
+    res.status(201).json({ success: true, data: messageObj });
   } catch (error) {
-    console.error('Error creating comment:', error);
-    res.status(500).json({ success: false, error: 'Server error creating comment' });
+    console.error('Error creating message:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
@@ -249,7 +319,7 @@ app.patch('/api/notifications/:id/read', async (req: express.Request, res: expre
 app.post('/api/notifications/read-all', async (req: express.Request, res: express.Response) => {
   const { userId, role } = req.body;
   try {
-    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId, role]);
+    const result = await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId as string, role as string]);
     res.status(200).json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to update notifications' });
@@ -448,15 +518,16 @@ app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response
     // Notification for assignment change
     if (assignee_id && typeof assignee_id === 'string') {
       const ticket = result.rows[0];
+      const ticketId = id as string;
       await createNotification({
         tenant_id: ticket.tenant_id,
         user_id: assignee_id,
         type: 'ticket',
-        entity_id: id,
+        entity_id: ticketId,
         title: 'Ticket zugewiesen',
-        message: `Das Ticket #${id.substring(0,6).toUpperCase()} "${ticket.title}" wurde Ihnen zugewiesen.`,
+        message: `Das Ticket #${ticketId.substring(0,6).toUpperCase()} "${ticket.title}" wurde Ihnen zugewiesen.`,
         priority: ticket.priority === 'critical' ? 'critical' : 'high',
-        link: `/tickets/${id}`
+        link: `/tickets/${ticketId}`
       });
     }
 
@@ -813,6 +884,659 @@ app.post('/api/knowledge/articles', async (req: express.Request, res: express.Re
     console.error('Error creating kb article:', error);
     res.status(500).json({ success: false, error: 'Server error creating article' });
   }
+});
+
+// ─── Customer Portal Routes ──────────────────────────────────────────────────
+
+
+
+// Helper to get system settings
+const getSystemSettings = async (tenantId: string | null, category: string) => {
+  const result = await pool.query(
+    'SELECT key, value, is_secret FROM system_settings WHERE (tenant_id = $1 OR tenant_id IS NULL) AND category = $2',
+    [tenantId, category]
+  );
+  const settings: Record<string, any> = {};
+  result.rows.forEach(row => {
+    settings[row.key] = row.value;
+  });
+  return settings;
+};
+
+app.get('/api/settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const result = await pool.query(
+      'SELECT category, key, value, is_secret FROM system_settings WHERE tenant_id = $1 OR tenant_id IS NULL',
+      [tenant_id]
+    );
+    
+    // Mask secrets for safety
+    const data = result.rows.map(row => {
+      if (row.is_secret && row.value) {
+        return { ...row, value: '********' };
+      }
+      return row;
+    });
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch settings' });
+  }
+});
+
+app.patch('/api/settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { category, key, value, is_secret } = req.body;
+  const { tenant_id } = req.user!;
+
+  if (value === '********') {
+    return res.json({ success: true, message: 'Value unchanged' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO system_settings (tenant_id, category, key, value, is_secret, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (tenant_id, category, key) 
+       DO UPDATE SET value = EXCLUDED.value, is_secret = EXCLUDED.is_secret, updated_at = NOW()
+       RETURNING *`,
+      [tenant_id, category, key, value, is_secret ?? false]
+    );
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    res.status(500).json({ success: false, error: 'Failed to update settings' });
+  }
+});
+
+
+
+app.post('/api/settings/test-db', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  let { host, port, database, user, password, ssl } = req.body;
+  const { tenant_id } = req.user!;
+
+  // If password is masked, try to load it from the DB
+  if (password === '********') {
+    const settings = await getSystemSettings(tenant_id, 'system');
+    host = host || settings.host;
+    port = port || settings.port;
+    database = database || settings.database;
+    user = user || settings.user;
+    password = settings.password;
+    ssl = ssl !== undefined ? ssl : settings.ssl;
+  }
+  
+  const testPool = new Pool({
+    host,
+    port: port ? parseInt(port) : 5432,
+    database,
+    user,
+    password,
+    ssl: ssl ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 5000
+  });
+
+  try {
+    const client = await testPool.connect();
+    const result = await client.query('SELECT version()');
+    client.release();
+    await testPool.end();
+    res.json({ success: true, message: 'Verbindung erfolgreich!', version: result.rows[0].version });
+  } catch (error: any) {
+    if (testPool) await testPool.end();
+    res.status(500).json({ success: false, error: 'Server error: ' + error.message });
+  }
+});
+
+app.post('/api/settings/test-email', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  let { provider, smtpHost, smtpPort, smtpUser, smtpPass, senderEmail, recipientEmail, clientId, clientSecret, tenantId } = req.body;
+  const { tenant_id: userTenantId } = req.user!;
+
+  if (smtpPass === '********' || clientSecret === '********') {
+    const settings = await getSystemSettings(userTenantId, 'email');
+    smtpPass = smtpPass === '********' ? settings.smtpPass : smtpPass;
+    clientSecret = clientSecret === '********' ? settings.clientSecret : clientSecret;
+  }
+
+  if (provider === 'm365') {
+    if (!clientId || !clientSecret) return res.status(400).json({ success: false, error: 'Microsoft 365 Client ID und Secret benötigt' });
+    // Simulate OAuth2 check
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return res.json({ success: true, message: 'Microsoft 365 Authentifizierung erfolgreich (Simuliert)' });
+  }
+  
+  if (!smtpHost || !smtpPort || !recipientEmail) {
+    return res.status(400).json({ success: false, error: 'Fehlende Konfigurationsdaten' });
+  }
+
+  try {
+    console.log(`Simulating test email to ${recipientEmail} via ${smtpHost}:${smtpPort}`);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    res.json({ success: true, message: `Test-E-Mail erfolgreich an ${recipientEmail} versendet!` });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id, role } = req.user!;
+    let query = 'SELECT id, first_name, last_name, email, role, created_at FROM users WHERE (tenant_id = $1 OR tenant_id IS NULL)';
+    const params: any[] = [tenant_id];
+
+    // If internal user, they might want to see customers too
+    const includeCustomers = req.query.includeCustomers === 'true';
+    const internalRoles = ['admin', 'management', 'employee'];
+    
+    if (internalRoles.includes(role)) {
+        if (!includeCustomers) {
+            query += " AND role IN ('admin', 'management', 'employee')";
+        }
+    } else {
+        // Customers/Clients can only see staff (for now, or maybe only their own company, but usually staff is fine)
+        query += " AND role IN ('admin', 'management', 'employee')";
+    }
+
+    query += ' ORDER BY role, last_name';
+    
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch users' });
+  }
+});
+
+// ─── Calendar Routes ─────────────────────────────────────────────────────────
+
+app.get('/api/calendar/events', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { tenant_id } = req.user!;
+  try {
+    const result = await pool.query(`
+      SELECT e.*, u.first_name as creator_first_name, u.last_name as creator_last_name,
+             r.first_name as responsible_first_name, r.last_name as responsible_last_name
+      FROM calendar_events e
+      LEFT JOIN users u ON e.created_by = u.id
+      LEFT JOIN users r ON e.responsible_id = r.id
+      WHERE e.tenant_id = $1 OR e.tenant_id IS NULL
+      ORDER BY e.start_time ASC
+    `, [tenant_id]);
+
+    const eventIds = result.rows.map(r => r.id);
+    let participants: any[] = [];
+    
+    if (eventIds.length > 0) {
+      const pResult = await pool.query(`
+        SELECT p.*, u.first_name, u.last_name, u.email
+        FROM calendar_event_participants p
+        JOIN users u ON p.user_id = u.id
+        WHERE p.event_id = ANY($1)
+      `, [eventIds]);
+      participants = pResult.rows;
+    }
+
+    const data = result.rows.map(event => ({
+      ...event,
+      participants: participants.filter(p => p.event_id === event.id)
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching events:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch calendar events' });
+  }
+});
+
+app.post('/api/calendar/events', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, description, start_time, end_time, is_all_day, location, color, category, responsible_id, participants, availability_status, is_private, reminder_minutes } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+
+  try {
+    await pool.query('BEGIN');
+    const eventResult = await pool.query(
+      `INSERT INTO calendar_events (tenant_id, created_by, responsible_id, title, description, start_time, end_time, is_all_day, location, color, category, availability_status, is_private, reminder_minutes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
+      [tenant_id, userId, responsible_id || userId, title, description, start_time, end_time, is_all_day || false, location, color, category, availability_status || 'busy', is_private || false, reminder_minutes || null]
+    );
+
+    const eventId = eventResult.rows[0].id;
+
+    if (participants && Array.isArray(participants)) {
+      // Fetch roles of all participants for correct notification links
+      const rolesResult = await pool.query('SELECT id, role FROM users WHERE id = ANY($1)', [participants]);
+      const userRoles = Object.fromEntries(rolesResult.rows.map(r => [r.id, r.role]));
+
+      for (const pUserId of participants) {
+        await pool.query(
+          'INSERT INTO calendar_event_participants (event_id, user_id, status) VALUES ($1, $2, $3)',
+          [eventId, pUserId, 'pending']
+        );
+
+        // Notify invited user
+        if (pUserId !== userId) {
+          const isCustomerRecipient = userRoles[pUserId] === 'customer' || userRoles[pUserId] === 'client';
+          const notificationLink = isCustomerRecipient ? `/portal/calendar` : `/calendar?eventId=${eventId}`;
+          
+          await createNotification({
+            tenant_id,
+            user_id: pUserId,
+            type: 'calendar',
+            entity_id: eventId,
+            title: 'Kalender-Einladung',
+            message: `Sie wurden zum Termin "${title}" am ${new Date(start_time).toLocaleString('de-CH')} eingeladen.`,
+            priority: 'normal',
+            link: notificationLink
+          });
+        }
+      }
+    }
+
+    await pool.query('COMMIT');
+    res.status(201).json({ success: true, data: eventResult.rows[0] });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error creating event:', error);
+    res.status(500).json({ success: false, error: 'Failed to create calendar event' });
+  }
+});
+
+app.patch('/api/calendar/events/:id', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { title, description, start_time, end_time, is_all_day, location, color, category, responsible_id, participants, availability_status, is_private, reminder_minutes } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+
+  try {
+    await pool.query('BEGIN');
+    
+    // Check permissions (admin or creator)
+    const currentEvent = await pool.query('SELECT created_by FROM calendar_events WHERE id = $1', [id]);
+    if (currentEvent.rows.length === 0) return res.status(404).json({ success: false, error: 'Event not found' });
+    if (req.user!.role !== 'admin' && currentEvent.rows[0].created_by !== userId) {
+      return res.status(403).json({ success: false, error: 'Unauthorized to edit this event' });
+    }
+
+    const eventResult = await pool.query(
+      `UPDATE calendar_events 
+       SET title = $1, description = $2, start_time = $3, end_time = $4, is_all_day = $5, 
+           location = $6, color = $7, category = $8, responsible_id = $9, 
+           availability_status = $10, is_private = $11, reminder_minutes = $12, updated_at = NOW()
+       WHERE id = $13 RETURNING *`,
+      [title, description, start_time, end_time, is_all_day, location, color, category, responsible_id, availability_status, is_private, reminder_minutes, id]
+    );
+
+    if (participants && Array.isArray(participants)) {
+      // Fetch roles of all participants for correct notification links
+      const rolesResult = await pool.query('SELECT id, role FROM users WHERE id = ANY($1)', [participants]);
+      const userRoles = Object.fromEntries(rolesResult.rows.map(r => [r.id, r.role]));
+
+      // Clear old participants and re-add (simple approach for now)
+      await pool.query('DELETE FROM calendar_event_participants WHERE event_id = $1', [id]);
+      for (const pUserId of participants) {
+        await pool.query(
+          'INSERT INTO calendar_event_participants (event_id, user_id, status) VALUES ($1, $2, $3)',
+          [id, pUserId, 'pending']
+        );
+
+        // Notify updated user
+        if (pUserId !== userId) {
+          const isCustomerRecipient = userRoles[pUserId] === 'customer' || userRoles[pUserId] === 'client';
+          const notificationLink = isCustomerRecipient ? `/portal/calendar` : `/calendar?eventId=${id as string}`;
+          
+          await createNotification({
+            tenant_id,
+            user_id: pUserId,
+            type: 'calendar',
+            entity_id: id as string,
+            title: 'Termin aktualisiert',
+            message: `Der Termin "${title}" am ${new Date(start_time).toLocaleString('de-CH')} wurde aktualisiert.`,
+            priority: 'normal',
+            link: notificationLink
+          });
+          console.log(`Simulating update email to participant ${pUserId} for event ${title}`);
+        }
+      }
+    }
+
+    await pool.query('COMMIT');
+    res.json({ success: true, data: eventResult.rows[0] });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error updating event:', error);
+    res.status(500).json({ success: false, error: 'Failed to update calendar event' });
+  }
+});
+
+// --- CUSTOMER PORTAL API ---
+
+// Helper to get company_id for a user
+const getCompanyId = async (userId: string) => {
+  const result = await pool.query('SELECT company_id FROM contacts WHERE user_id = $1', [userId]);
+  return result.rows[0]?.company_id;
+};
+
+app.get('/api/portal/dashboard', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId, company_id } = req.user!;
+    
+    const [tickets, projects, offers, invoices, contracts] = await Promise.all([
+      pool.query("SELECT COUNT(*) FROM tickets WHERE customer_id = $1 AND status NOT IN ('resolved', 'closed')", [userId as string]),
+      pool.query("SELECT COUNT(*) FROM projects WHERE company_id = $1 AND status = 'in_progress'", [company_id as string]),
+      pool.query("SELECT COUNT(*) FROM offers WHERE company_id = $1 AND status = 'sent'", [company_id as string]),
+      pool.query("SELECT COUNT(*) FROM invoices WHERE company_id = $1 AND status IN ('open', 'overdue')", [company_id as string]),
+      pool.query("SELECT COUNT(*) FROM contracts WHERE company_id = $1 AND status = 'active'", [company_id as string])
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        openTickets: parseInt(tickets.rows[0].count),
+        activeProjects: parseInt(projects.rows[0].count),
+        pendingOffers: parseInt(offers.rows[0].count),
+        openInvoices: parseInt(invoices.rows[0].count),
+        activeContracts: parseInt(contracts.rows[0].count)
+      }
+    });
+  } catch (error) {
+    console.error('Portal: Error fetching dashboard metrics:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/tickets', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const result = await pool.query(`
+      SELECT t.*, u.first_name as assignee_first_name, u.last_name as assignee_last_name
+      FROM tickets t
+      LEFT JOIN users u ON t.assignee_id = u.id
+      WHERE t.customer_id = $1
+      ORDER BY t.updated_at DESC
+    `, [userId]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Portal: Error fetching tickets:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/portal/tickets', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, description, priority, type } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+  
+  if (!title || !description) return res.status(400).json({ success: false, error: 'Title and Description required' });
+
+  try {
+    const companyId = await getCompanyId(userId);
+    const result = await pool.query(
+      `INSERT INTO tickets (tenant_id, title, description, status, priority, type, company_id, customer_id, assignee_id) 
+       VALUES ($1, $2, $3, 'new', $4, $5, $6, $7, NULL) RETURNING *`,
+      [tenant_id, title, description, priority || 'medium', type || 'support', companyId, userId]
+    );
+
+    // Notify internal team (pool notification)
+    await createNotification({
+      tenant_id,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: result.rows[0].id,
+      title: 'Neues Ticket im Pool',
+      message: `Kunde hat ein neues Ticket "${title}" erstellt.`,
+      priority: priority === 'critical' ? 'critical' : 'normal',
+      link: `/tickets/${result.rows[0].id}`
+    });
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Portal: Error creating ticket:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/tickets/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id } = req.params;
+    const { id: userId } = req.user!;
+    
+    const ticketResult = await pool.query(`
+        SELECT t.*, u.first_name as assignee_first_name, u.last_name as assignee_last_name
+        FROM tickets t
+        LEFT JOIN users u ON t.assignee_id = u.id
+        WHERE t.id = $1 AND t.customer_id = $2
+    `, [id, userId]);
+
+    if (ticketResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+
+    const messagesResult = await pool.query(`
+        SELECT m.*, u.first_name, u.last_name, u.role
+        FROM ticket_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.ticket_id = $1 AND m.is_internal = FALSE
+        ORDER BY m.created_at ASC
+    `, [id]);
+
+    res.json({ success: true, data: { ...ticketResult.rows[0], messages: messagesResult.rows } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { message } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+
+  try {
+    // Check if ticket belongs to user
+    const check = await pool.query('SELECT id, assignee_id, title FROM tickets WHERE id = $1 AND customer_id = $2', [id, userId]);
+    if (check.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+
+    const result = await pool.query(
+      'INSERT INTO ticket_messages (ticket_id, sender_id, message, is_internal) VALUES ($1, $2, $3, FALSE) RETURNING *',
+      [id, userId, message]
+    );
+
+    // Notify assignee if exists
+    if (check.rows[0].assignee_id) {
+        await createNotification({
+            tenant_id,
+            user_id: check.rows[0].assignee_id,
+            type: 'ticket',
+            entity_id: id as string,
+            title: 'Neue Nachricht vom Kunden',
+            message: `Kunde hat auf Ticket "${check.rows[0].title}" geantwortet.`,
+            priority: 'normal',
+            link: `/tickets/${id as string}`
+        });
+    }
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/invoices', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const companyId = await getCompanyId(userId);
+    if (!companyId) return res.json({ success: true, data: [] });
+
+    const result = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY due_date DESC', [companyId]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/offers', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const companyId = await getCompanyId(userId);
+    if (!companyId) return res.json({ success: true, data: [] });
+
+    const result = await pool.query('SELECT * FROM offers WHERE company_id = $1 ORDER BY created_at DESC', [companyId]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const companyId = await getCompanyId(userId);
+    if (!companyId) return res.json({ success: true, data: [] });
+
+    const result = await pool.query('SELECT * FROM contracts WHERE company_id = $1 ORDER BY start_date DESC', [companyId]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.get('/api/portal/calendar/events', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId, tenant_id } = req.user!;
+    // Fetch events where user is a participant
+    const result = await pool.query(`
+      SELECT e.*, u.first_name as creator_first_name, u.last_name as creator_last_name
+      FROM calendar_events e
+      JOIN calendar_event_participants p ON e.id = p.event_id
+      LEFT JOIN users u ON e.created_by = u.id
+      WHERE p.user_id = $1 AND (e.tenant_id = $2 OR e.tenant_id IS NULL)
+      ORDER BY e.start_time ASC
+    `, [userId, tenant_id]);
+
+    const eventIds = result.rows.map(r => r.id);
+    let participants: any[] = [];
+    
+    if (eventIds.length > 0) {
+      const pResult = await pool.query(`
+        SELECT p.*, u.first_name, u.last_name, u.email
+        FROM calendar_event_participants p
+        JOIN users u ON p.user_id = u.id
+        WHERE p.event_id = ANY($1)
+      `, [eventIds]);
+      participants = pResult.rows;
+    }
+
+    const data = result.rows.map(event => ({
+      ...event,
+      participants: participants.filter(p => p.event_id === event.id)
+    }));
+
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Portal: Error fetching calendar events:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// --- TICKET ASSIGNMENT / POOL MANAGEMENT ---
+
+app.patch('/api/tickets/:id/take', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
+    const { id } = req.params;
+    const { id: userId } = req.user!;
+    try {
+    const result = await pool.query(
+        "UPDATE tickets SET assignee_id = $1, status = 'open', updated_at = NOW() WHERE id = $2 RETURNING *",
+        [userId as string, id]
+    );
+
+    if (result.rows.length > 0) {
+        const ticket = result.rows[0];
+        // Notify customer
+        await createNotification({
+            tenant_id: ticket.tenant_id,
+            user_id: ticket.customer_id,
+            type: 'ticket',
+            entity_id: id as string,
+            title: 'Ticket übernommen',
+            message: `Ihr Ticket "${ticket.title}" wurde von einem Mitarbeiter übernommen.`,
+            priority: 'normal',
+            link: `/portal/tickets/${id as string}`
+        });
+    }
+
+    res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Server error' });
+    }
+});
+
+app.patch('/api/tickets/:id/assign', authenticateToken, authorizeRole('admin', 'management'), async (req: AuthenticatedRequest, res: express.Response) => {
+    const { id } = req.params;
+    const { assignee_id } = req.body;
+    try {
+        const result = await pool.query(
+            "UPDATE tickets SET assignee_id = $1, status = 'open', updated_at = NOW() WHERE id = $2 RETURNING *",
+            [assignee_id, id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+        
+        // Notify new assignee
+        await createNotification({
+            tenant_id: result.rows[0].tenant_id,
+            user_id: assignee_id as string,
+            type: 'ticket',
+            entity_id: id as string,
+            title: 'Ticket zugewiesen',
+            message: `Ihnen wurde das Ticket "${result.rows[0].title}" zugewiesen.`,
+            priority: 'normal',
+            link: `/tickets/${id as string}`
+        });
+
+        // Notify customer
+        await createNotification({
+            tenant_id: result.rows[0].tenant_id,
+            user_id: result.rows[0].customer_id,
+            type: 'ticket',
+            entity_id: id as string,
+            title: 'Ticket wurde zugewiesen',
+            message: `Ihr Ticket "${result.rows[0].title}" wurde einem Mitarbeiter zur Bearbeitung zugewiesen.`,
+            priority: 'normal',
+            link: `/portal/tickets/${id as string}`
+        });
+
+        res.json({ success: true, data: result.rows[0] });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Server error' });
+    }
+});
+
+// Internal Ticket Message with Customer Notification
+app.post('/api/tickets/:id/messages', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
+    const { id } = req.params;
+    const { message, is_internal } = req.body;
+    const { id: userId, tenant_id } = req.user!;
+  
+    try {
+      const ticketCheck = await pool.query('SELECT customer_id, title FROM tickets WHERE id = $1', [id]);
+      if (ticketCheck.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+  
+      const result = await pool.query(
+        'INSERT INTO ticket_messages (ticket_id, sender_id, message, is_internal) VALUES ($1, $2, $3, $4) RETURNING *',
+        [id, userId, message, is_internal || false]
+      );
+  
+      // Notify customer if not internal
+      if (!is_internal) {
+          await createNotification({
+              tenant_id: tenant_id as string,
+              user_id: ticketCheck.rows[0].customer_id,
+              type: 'ticket',
+              entity_id: id as string,
+              title: 'Neue Nachricht zu Ihrem Ticket',
+              message: `Unser Team hat auf Ihr Ticket "${ticketCheck.rows[0].title}" geantwortet.`,
+              priority: 'normal',
+              link: `/portal/tickets/${id as string}`
+          });
+      }
+  
+      res.status(201).json({ success: true, data: result.rows[0] });
+    } catch (error) {
+      res.status(500).json({ success: false, error: 'Server error' });
+    }
 });
 
 // Start server

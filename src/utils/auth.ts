@@ -59,6 +59,7 @@ const ROLE_HIERARCHY: Record<string, number> = {
   manager: 80,
   employee: 50,
   customer: 10,
+  client: 10,
 };
 
 /** Check if the current user has one of the allowed roles */

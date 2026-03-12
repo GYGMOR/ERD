@@ -51,13 +51,31 @@ export const TicketsView = () => {
 
   const fetchTickets = async () => {
     try {
-      const res = await fetch('/api/tickets');
+      const res = await fetch('/api/tickets', {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
       const data = await res.json();
       if (data.success) setTickets(data.data);
     } catch (err) {
       console.error('Error fetching tickets:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const takeTicket = async (e: React.MouseEvent, ticketId: string) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/tickets/${ticketId}/take`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchTickets();
+      }
+    } catch (err) {
+      console.error('Failed to take ticket', err);
     }
   };
 
@@ -246,7 +264,15 @@ export const TicketsView = () => {
                 </span>
               </td>
               <td style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 14 }}>
-                {ticket.assignee_first_name ? `${ticket.assignee_first_name} ${ticket.assignee_last_name}` : <span style={{ opacity: 0.5 }}>–</span>}
+                {ticket.assignee_first_name ? `${ticket.assignee_first_name} ${ticket.assignee_last_name}` : (
+                  <button 
+                    onClick={(e) => takeTicket(e, ticket.id)}
+                    className="btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: 11, fontWeight: 700 }}
+                  >
+                    Übernehmen
+                  </button>
+                )}
               </td>
               <td style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 13 }}>
                 {new Date(ticket.created_at).toLocaleDateString('de-CH')}
