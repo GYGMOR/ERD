@@ -121,6 +121,56 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
   }
 });
 
+// Auth Route: Microsoft Entra ID (Azure AD) Sync
+app.post('/api/auth/msal-sync', async (req: express.Request, res: express.Response) => {
+  const { email, azure_ad_id, firstName, lastName } = req.body;
+  
+  if (!email) return res.status(400).json({ success: false, error: 'Missing email from MSAL' });
+
+  try {
+    // 1. Check if user exists (by email or azure_ad_id)
+    let userResult = await pool.query('SELECT * FROM users WHERE email = $1 AND is_active = true', [email]);
+    
+    if (userResult.rows.length === 0) {
+      // Optioal: Auto-registrierung oder Fehler?
+      // Für NexService: Fehler, da User manuell angelegt werden (Mitarbeiter/Kunden)
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Kein NexService-Konto für diese E-Mail gefunden. Bitte wende dich an den Admin.' 
+      });
+    }
+
+    const user = userResult.rows[0];
+
+    // 2. Update azure_ad_id if not set
+    if (!user.azure_ad_id && azure_ad_id) {
+        await pool.query('UPDATE users SET azure_ad_id = $1 WHERE id = $2', [azure_ad_id, user.id]);
+    }
+
+    // 3. Generate local JWT
+    const token = jwt.sign(
+      { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(200).json({ 
+      success: true, 
+      token, 
+      user: { 
+        id: user.id, 
+        email: user.email, 
+        role: user.role, 
+        firstName: user.first_name, 
+        lastName: user.last_name 
+      } 
+    });
+  } catch (error) {
+    console.error('MSAL sync error:', error);
+    res.status(500).json({ success: false, error: 'Server error during MSAL sync' });
+  }
+});
+
 // ─── User Management Routes ───────────────────────────────────────────────────
 app.get('/api/users', async (req: express.Request, res: express.Response) => {
   try {

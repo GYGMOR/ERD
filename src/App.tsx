@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { HashRouter as Router, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { useMsal } from '@azure/msal-react';
 import {
   Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft,
   Search, FolderOpen, UserCheck, ShieldCheck, Activity,
@@ -206,14 +207,73 @@ const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.Element
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 const AppChild = () => {
+  const { instance, inProgress } = useMsal();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
+  const [isProcessingAuth, setIsProcessingAuth] = useState(true);
   const location = useLocation();
   const currentUser = getUser();
+
+  // Handle MSAL Redirect Response
+  useEffect(() => {
+    const handleRedirect = async () => {
+      try {
+        const response = await instance.handleRedirectPromise();
+        
+        if (response) {
+          console.log('MSAL Redirect Response received:', response);
+          instance.setActiveAccount(response.account);
+
+          // Sync with NexService Backend
+          // Wir senden den Username (E-Mail) und die Azure ID an unser Backend
+          const syncRes = await fetch('/api/auth/msal-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: response.account.username,
+              azure_ad_id: response.account.localAccountId,
+              firstName: response.account.idTokenClaims?.given_name || response.account.name?.split(' ')[0] || '',
+              lastName: response.account.idTokenClaims?.family_name || response.account.name?.split(' ').slice(1).join(' ') || ''
+            })
+          });
+
+          const syncData = await syncRes.json();
+          if (syncData.success) {
+            localStorage.setItem('token', syncData.token);
+            localStorage.setItem('user', JSON.stringify(syncData.user));
+            setIsAuthenticated(true);
+            // URL bereinigen
+            window.location.hash = '#/'; 
+          } else {
+            console.error('MSAL Sync failed:', syncData.error);
+            alert('Synchronisierung fehlgeschlagen: ' + syncData.error);
+          }
+        }
+      } catch (err) {
+        console.error('Error handling MSAL redirect:', err);
+      } finally {
+        setIsProcessingAuth(false);
+      }
+    };
+
+    handleRedirect();
+  }, [instance]);
 
   const handleLogout = () => { clearAuth(); setIsAuthenticated(false); };
 
   const isPortalPath = location.pathname.startsWith('/portal');
+
+  if (isProcessingAuth || inProgress !== 'none') {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--color-surface)' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 40, height: 40, border: '4px solid var(--color-primary)', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }}></div>
+          <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+          <p style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}>Anmeldung wird verarbeitet...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     if (isPortalPath) {
@@ -353,7 +413,7 @@ const AppChild = () => {
 };
 
 const App = () => (
-  <Router basename="/ERD">
+  <Router>
     <AppChild />
   </Router>
 );

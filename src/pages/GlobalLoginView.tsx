@@ -37,10 +37,10 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   };
 
   const handleMicrosoftLogin = () => {
-    instance.loginPopup(loginRequest).then(() => {
-      onLogin();
-    }).catch((e: unknown) => {
-      console.error(e);
+    // Switch from Popup to Redirect for better SPA reliability on GH Pages
+    instance.loginRedirect(loginRequest).catch((e: unknown) => {
+      console.error('MSAL Login Redirect failed:', e);
+      setErrorMsg('Microsoft Login konnte nicht gestartet werden.');
     });
   };
 
