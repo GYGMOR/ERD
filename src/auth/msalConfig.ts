@@ -1,13 +1,17 @@
 import { LogLevel, type Configuration } from "@azure/msal-browser";
 
+const isProd = import.meta.env.PROD;
+const redirectUri = isProd 
+  ? "https://gygmor.github.io/ERD/" 
+  : window.location.origin + "/";
+
 export const msalConfig: Configuration = {
     auth: {
         // Will be populated from .env 
         clientId: import.meta.env.VITE_MSAL_CLIENT_ID || "deine-client-id-hier",
         authority: `https://login.microsoftonline.com/${import.meta.env.VITE_MSAL_TENANT_ID || "deine-tenant-id-hier"}`,
-        // Dynamische Erkennung der URL (wichtig für GitHub Pages Unterverzeichnisse wie /ERD/)
-        redirectUri: typeof window !== 'undefined' ? (window.location.origin + window.location.pathname) : "/",
-        postLogoutRedirectUri: typeof window !== 'undefined' ? (window.location.origin + window.location.pathname) : "/"
+        redirectUri: redirectUri,
+        postLogoutRedirectUri: redirectUri
     },
     cache: {
         cacheLocation: "sessionStorage", // This configures where your cache will be stored
