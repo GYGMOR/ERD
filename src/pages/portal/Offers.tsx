@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FileText, Download, CheckCircle, Eye, Send } from 'lucide-react';
-import { supabase } from '../../utils/supabaseClient';
+import { dataService } from '../../services/dataService';
 
 export const Offers = () => {
   const [offers, setOffers] = useState<any[]>([]);
@@ -9,11 +9,8 @@ export const Offers = () => {
   useEffect(() => {
     const fetchOffers = async () => {
       try {
-        const { data, error } = await supabase
-          .from('offers')
-          .select('*')
-          .order('created_at', { ascending: false });
-        if (!error && data) setOffers(data);
+        const res = await dataService.getPortalOffers();
+        if (res.success) setOffers(res.data || []);
       } catch (err) {
         console.error('Failed to fetch offers', err);
       } finally {

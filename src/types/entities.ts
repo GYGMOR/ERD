@@ -244,7 +244,7 @@ export interface Notification {
   tenant_id: string | null;
   user_id: string | null;
   target_role: string | null;
-  type: 'ticket' | 'project' | 'invoice' | 'contract';
+  type: 'ticket' | 'project' | 'invoice' | 'contract' | 'calendar';
   entity_id: string | null;
   title: string;
   message: string;

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Clock, MapPin, Users, AlignLeft, Save, Check } from 'lucide-react';
+import { dataService } from '../services/dataService';
 
 interface EventModalProps {
   isOpen: boolean;
@@ -26,6 +27,8 @@ export const EventModal = ({ isOpen, onClose, onSave, initialDate, endDate, even
     isPrivate: false,
     reminderMinutes: 15
   });
+
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     if (isOpen) {
@@ -65,15 +68,8 @@ export const EventModal = ({ isOpen, onClose, onSave, initialDate, endDate, even
   }, [isOpen, initialDate, endDate, editingEvent]);
 
   const fetchUsers = async () => {
-    try {
-      const res = await fetch('/api/users?includeCustomers=true', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
-      });
-      const data = await res.json();
-      if (data.success) setUsers(data.data);
-    } catch (e) {
-      console.error('Failed to fetch users');
-    }
+    const res = await dataService.getUsers({ includeCustomers: true });
+    if (res.success) setUsers(res.data);
   };
 
   const toggleParticipant = (userId: string) => {
@@ -84,6 +80,11 @@ export const EventModal = ({ isOpen, onClose, onSave, initialDate, endDate, even
         : [...prev.participants, userId]
     }));
   };
+
+  const filteredUsers = users.filter(u => 
+    `${u.first_name} ${u.last_name}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    u.email.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   if (!isOpen) return null;
 
@@ -177,27 +178,69 @@ export const EventModal = ({ isOpen, onClose, onSave, initialDate, endDate, even
             </div>
 
             {/* Participants */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                 <Users size={18} style={{ color: 'var(--color-text-muted)' }} />
-                <span style={{ fontSize: 14, fontWeight: 600 }}>Teilnehmer einladen</span>
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <input 
+                    placeholder="Teilnehmer suchen (Name oder E-Mail)..." 
+                    className="input-field"
+                    style={{ width: '100%' }}
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+                </div>
               </div>
-              <div style={{ 
-                marginLeft: 30, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, 
-                maxHeight: 120, overflowY: 'auto', padding: 12, backgroundColor: 'var(--color-surface-hover)', borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--color-border)'
-              }}>
-                {users.map(user => (
-                  <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', padding: '4px 0' }}>
-                    <input 
-                      type="checkbox" 
-                      checked={event.participants.includes(user.id)} 
-                      onChange={() => toggleParticipant(user.id)} 
-                    />
-                    {user.first_name} {user.last_name}
-                  </label>
-                ))}
-              </div>
+              
+              {/* Selected Participants Chips */}
+              {event.participants.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginLeft: 30 }}>
+                  {event.participants.map(pid => {
+                    const u = users.find(user => user.id === pid);
+                    if (!u) return null;
+                    return (
+                      <div key={pid} style={{ 
+                        backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)', 
+                        padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 600,
+                        display: 'flex', alignItems: 'center', gap: 6
+                      }}>
+                        {u.first_name} {u.last_name}
+                        <button onClick={() => toggleParticipant(pid)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--color-primary)', padding: 0 }}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* User List Dropdown (only if searching) */}
+              {searchTerm && (
+                <div style={{ 
+                  marginLeft: 30, maxHeight: 150, overflowY: 'auto', border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface)'
+                }}>
+                  {filteredUsers.length === 0 ? (
+                    <div style={{ padding: 12, fontSize: 13, color: 'var(--color-text-muted)' }}>Keine Benutzer gefunden.</div>
+                  ) : filteredUsers.map(user => (
+                    <div 
+                      key={user.id} 
+                      onClick={() => { toggleParticipant(user.id); setSearchTerm(''); }}
+                      style={{ 
+                        padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--color-border)',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        backgroundColor: event.participants.includes(user.id) ? 'var(--color-surface-hover)' : 'transparent'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{user.first_name} {user.last_name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{user.email}</div>
+                      </div>
+                      {event.participants.includes(user.id) && <Check size={14} style={{ color: 'var(--color-primary)' }} />}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Description */}

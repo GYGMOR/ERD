@@ -8,7 +8,6 @@ import {
 import { getUser } from '../utils/auth';
 import type { Notification } from '../types/entities';
 import { dataService } from '../services/dataService';
-import { supabase } from '../utils/supabaseClient';
 
 export const NotificationCenter = () => {
   const [open, setOpen] = useState(false);
@@ -63,11 +62,10 @@ export const NotificationCenter = () => {
   const markAllRead = async () => {
     if (!user) return;
     try {
-      await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .or(`user_id.eq.${user.id},target_role.eq.${user.role}`);
-      setNotifications([]);
+      const res = await dataService.markAllNotificationsAsRead();
+      if (res.success) {
+        setNotifications([]);
+      }
     } catch (err) {
       console.error('Failed to mark all as read', err);
     }
@@ -194,6 +192,34 @@ export const NotificationCenter = () => {
                       <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.4, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
                         {n.message}
                       </p>
+                      {(n.type as string) === 'calendar' && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 10 }} onClick={e => e.stopPropagation()}>
+                          <button 
+                            className="btn-primary" 
+                            style={{ padding: '4px 12px', fontSize: 11, backgroundColor: 'var(--color-success)', borderColor: 'var(--color-success)' }}
+                            onClick={async () => {
+                              if (n.entity_id) {
+                                await dataService.rsvpCalendarEvent(n.entity_id, 'confirmed');
+                                markAsRead(n.id);
+                              }
+                            }}
+                          >
+                            Zusagen
+                          </button>
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: '4px 12px', fontSize: 11 }}
+                            onClick={async () => {
+                              if (n.entity_id) {
+                                await dataService.rsvpCalendarEvent(n.entity_id, 'declined');
+                                markAsRead(n.id);
+                              }
+                            }}
+                          >
+                            Absagen
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}

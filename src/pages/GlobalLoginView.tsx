@@ -1,26 +1,42 @@
 import { useState } from 'react';
-import { Mail, KeyRound } from 'lucide-react';
+import { Mail, KeyRound, CheckCircle2, ShieldCheck, X, RefreshCw } from 'lucide-react';
 import { useMsal } from '@azure/msal-react';
 import { loginRequest } from '../auth/msalConfig';
 
 export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
+  const [botVerificationChecked, setBotVerificationChecked] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  // Forgot Password States
+  const [showForgotModal, setShowForgotModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [resetStep, setResetStep] = useState(1); // 1: Email, 2: Token/NewPass
+  const [resetMsg, setResetMsg] = useState({ type: '', text: '' });
 
   const { instance } = useMsal();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+
+    if (!botVerificationChecked) {
+      setErrorMsg('Bitte bestätige, dass du kein Roboter bist.');
+      return;
+    }
+
+    setLoading(true);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password, botVerificationChecked })
       });
       const data = await res.json();
       if (data.success) {
@@ -33,6 +49,8 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
     } catch (err) {
       console.error(err);
       setErrorMsg('Serververbindung fehlgeschlagen');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -42,6 +60,54 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
       console.error('MSAL Login Redirect failed:', e);
       setErrorMsg('Microsoft Login konnte nicht gestartet werden.');
     });
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetMsg({ type: '', text: '' });
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResetStep(2);
+        setResetMsg({ type: 'success', text: data.message });
+      } else {
+        setResetMsg({ type: 'error', text: data.error });
+      }
+    } catch (err) {
+      setResetMsg({ type: 'error', text: 'Fehler beim Senden der Anfrage.' });
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetMsg({ type: '', text: '' });
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resetEmail, token: resetToken, newPassword })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResetMsg({ type: 'success', text: data.message });
+        setTimeout(() => {
+          setShowForgotModal(false);
+          setResetStep(1);
+          setResetEmail('');
+          setResetToken('');
+          setNewPassword('');
+        }, 3000);
+      } else {
+        setResetMsg({ type: 'error', text: data.error });
+      }
+    } catch (err) {
+      setResetMsg({ type: 'error', text: 'Fehler beim Zurücksetzen des Passworts.' });
+    }
   };
 
   return (
@@ -78,7 +144,8 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
             <h2 style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '8px' }}>Willkommen zurück</h2>
             <p style={{ color: 'var(--color-text-muted)' }}>Bitte melde dich mit deinen Zugangsdaten an.</p>
             {errorMsg && (
-              <div style={{ padding: '12px', marginTop: '16px', backgroundColor: 'var(--color-danger)', color: 'white', borderRadius: 'var(--radius-md)', fontSize: '14px', fontWeight: 500 }}>
+              <div style={{ padding: '12px', marginTop: '16px', backgroundColor: 'rgba(255, 86, 48, 0.1)', color: 'var(--color-danger)', borderRadius: 'var(--radius-md)', fontSize: '14px', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ShieldCheck size={18} />
                 {errorMsg}
               </div>
             )}
@@ -106,7 +173,12 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
             <div>
               <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', fontWeight: 600, marginBottom: '8px', color: 'var(--color-text-main)' }}>
                 Passwort
-                <a href="#" style={{ fontWeight: 500, color: 'var(--color-primary)', textDecoration: 'none' }}>Passwort vergessen?</a>
+                <button 
+                  type="button"
+                  onClick={() => setShowForgotModal(true)}
+                  style={{ background: 'none', border: 'none', padding: 0, fontWeight: 500, color: 'var(--color-primary)', cursor: 'pointer', fontSize: '13px' }}>
+                  Passwort vergessen?
+                </button>
               </label>
               <div style={{ position: 'relative' }}>
                 <KeyRound size={18} style={{ position: 'absolute', left: '16px', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
@@ -120,9 +192,49 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
                 />
               </div>
             </div>
+
+            {/* Bot Verification Box */}
+            <div 
+              style={{ 
+                padding: '12px', 
+                backgroundColor: 'var(--color-surface-hover)', 
+                borderRadius: 'var(--radius-md)', 
+                border: '1px solid var(--color-border)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                cursor: 'pointer',
+                userSelect: 'none'
+              }}
+              onClick={() => setBotVerificationChecked(!botVerificationChecked)}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ 
+                  width: '20px', 
+                  height: '20px', 
+                  borderRadius: '3px', 
+                  border: '2px solid var(--color-border)',
+                  backgroundColor: botVerificationChecked ? 'var(--color-success)' : 'white',
+                  borderColor: botVerificationChecked ? 'var(--color-success)' : 'var(--color-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.2s'
+                }}>
+                  {botVerificationChecked && <CheckCircle2 size={14} color="white" />}
+                </div>
+                <span style={{ fontSize: '14px', fontWeight: 500 }}>Ich bin kein Roboter</span>
+              </div>
+              <img src="https://www.gstatic.com/recaptcha/api2/logo_48.png" width="24" height="24" alt="reCAPTCHA" style={{ opacity: 0.6 }} />
+            </div>
             
-            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '14px', fontSize: '15px', marginTop: '8px' }}>
-              Anmelden
+            <button 
+              type="submit" 
+              className="btn-primary" 
+              disabled={loading}
+              style={{ width: '100%', padding: '14px', fontSize: '15px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            >
+              {loading ? <RefreshCw size={18} className="animate-spin" /> : 'Anmelden'}
             </button>
           </form>
 
@@ -167,6 +279,78 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
           </p>
         </div>
       </div>
+
+      {/* Forgot Password Modal */}
+      {showForgotModal && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }}>
+          <div className="card animate-in zoom-in-95 duration-200" style={{ width: 400, padding: '32px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>Passwort vergessen?</h3>
+              <button onClick={() => setShowForgotModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            {resetMsg.text && (
+              <div style={{ padding: '12px', marginBottom: '20px', borderRadius: 'var(--radius-md)', fontSize: '14px', backgroundColor: resetMsg.type === 'success' ? 'rgba(54, 179, 126, 0.1)' : 'rgba(255, 86, 48, 0.1)', color: resetMsg.type === 'success' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                {resetMsg.text}
+              </div>
+            )}
+
+            {resetStep === 1 ? (
+              <form onSubmit={handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <p style={{ margin: 0, fontSize: '14px', color: 'var(--color-text-muted)' }}>Gib deine E-Mail-Adresse ein, um einen Reset-Code zu erhalten.</p>
+                <div>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>E-Mail Adresse</label>
+                  <input 
+                    type="email" 
+                    required
+                    className="input-field"
+                    placeholder="name@company.com"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                  />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px' }}>
+                  Code anfordern
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>6-stelliger Code</label>
+                  <input 
+                    type="text" 
+                    required
+                    className="input-field"
+                    placeholder="123456"
+                    maxLength={6}
+                    value={resetToken}
+                    onChange={(e) => setResetToken(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>Neues Passwort</label>
+                  <input 
+                    type="password" 
+                    required
+                    className="input-field"
+                    placeholder="••••••••"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                </div>
+                <button type="submit" className="btn-primary" style={{ width: '100%', padding: '12px' }}>
+                  Passwort speichern
+                </button>
+                <button type="button" onClick={() => setResetStep(1)} style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '13px', cursor: 'pointer' }}>
+                  Zurück
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

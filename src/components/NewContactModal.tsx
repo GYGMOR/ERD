@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getTenantId } from '../utils/auth';
 import { dataService } from '../services/dataService';
-import { supabase } from '../utils/supabaseClient';
 import type { Company } from '../types/entities';
 
 interface NewContactModalProps {
@@ -48,11 +47,13 @@ export const NewContactModal = ({ onClose, onSave }: NewContactModalProps) => {
     const tenantId = getTenantId();
     if (!tenantId) { setError('Kein Tenant. Bitte neu einloggen.'); setLoading(false); return; }
     try {
-      const { error } = await supabase
-        .from('contacts')
-        .insert([{ ...formData, tenant_id: tenantId, company_id: formData.company_id || null }]);
-      if (!error) { onSave(); }
-      else { setError(error.message || 'Fehler beim Erstellen.'); }
+      const res = await dataService.createContact({ 
+        ...formData, 
+        tenant_id: tenantId, 
+        company_id: formData.company_id || null 
+      });
+      if (res.success) { onSave(); }
+      else { setError(res.error || 'Fehler beim Erstellen.'); }
     } catch { setError('Netzwerkfehler.'); } finally { setLoading(false); }
   };
 

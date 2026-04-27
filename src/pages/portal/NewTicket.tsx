@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Info, Send, ShieldQuestion } from 'lucide-react';
-import { supabase } from '../../utils/supabaseClient';
+import { dataService } from '../../services/dataService';
 import { getUser, getTenantId } from '../../utils/auth';
 
 export const NewTicket = () => {
@@ -21,19 +21,16 @@ export const NewTicket = () => {
     try {
       const user = getUser();
       const tenantId = getTenantId();
-      const { data, error } = await supabase
-        .from('tickets')
-        .insert([{ 
-          ...formData,
-          customer_id: user?.id || null,
-          tenant_id: tenantId || null,
-          status: 'new'
-        }])
-        .select()
-        .single();
+      
+      const res = await dataService.createTicket({ 
+        ...formData,
+        customer_id: user?.id || null,
+        tenant_id: tenantId || null,
+        status: 'new'
+      });
 
-      if (!error && data) {
-        navigate(`/portal/tickets/${data.id}`);
+      if (res.success && res.data) {
+        navigate(`/portal/tickets/${res.data.id}`);
       }
     } catch (err) {
       console.error('Failed to create ticket', err);

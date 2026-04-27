@@ -3,8 +3,8 @@ import { ChevronLeft, ChevronRight, Plus,
   Clock, RefreshCw
 } from 'lucide-react';
 import { EventModal } from '../components/EventModal';
-import { supabase } from '../utils/supabaseClient';
-import { getTenantId } from '../utils/auth';
+import { dataService } from '../services/dataService';
+import { getTenantId, getUser } from '../utils/auth';
 
 const SectionHeader = ({ title }: { title: string }) => (
   <h4 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.05em', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -184,6 +184,11 @@ const CalendarGrid = ({ events, onRangeSelect, onEventClick, view, currentDate }
                     }}
                   >
                     <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{event.title}</div>
+                    {(event.creator_first_name || event.creator_last_name) && (
+                      <div style={{ fontSize: 9, opacity: 0.9, fontStyle: 'italic' }}>
+                        {event.creator_first_name} {event.creator_last_name}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
                       <Clock size={10} /> {`${startHour}:${startMinutes.toString().padStart(2, '0')}`}
                     </div>
@@ -206,26 +211,45 @@ export const CalendarView = () => {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingEvent, setEditingEvent] = useState<any | null>(null);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchInitialData();
+  }, []);
 
   useEffect(() => {
     fetchEvents();
-  }, [currentDate]);
+  }, [currentDate, selectedUserIds]);
+
+  const fetchInitialData = async () => {
+    const user = getUser();
+    if (user) setSelectedUserIds([user.id]);
+    
+    const res = await dataService.getUsers();
+    if (res.success) {
+      setAllUsers(res.data.filter((u: any) => ['admin', 'manager', 'employee'].includes(u.role)));
+    }
+  };
 
   const fetchEvents = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('calendar_events')
-        .select('*')
-        .order('start_time', { ascending: true });
-      
-      if (!error && data) {
-        setEvents(data.map((e: any) => ({ ...e, start: new Date(e.start_time), end: new Date(e.end_time) })));
+      const res = await dataService.getCalendarEvents({ userIds: selectedUserIds });
+      if (res.success && res.data) {
+        setEvents(res.data.map((e: any) => ({ ...e, start: new Date(e.start_time), end: new Date(e.end_time) })));
       }
     } catch (e) {
       console.error('Failed to fetch events', e);
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleUser = (userId: string) => {
+    setSelectedUserIds(prev => 
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
   };
 
   const handleRangeSelect = (start: Date, end: Date) => {
@@ -260,14 +284,14 @@ export const CalendarView = () => {
         reminder_minutes: eventData.reminderMinutes || null
       };
 
-      let error;
+      let res;
       if (editingEvent) {
-        ({ error } = await supabase.from('calendar_events').update(eventPayload).eq('id', editingEvent.id));
+        res = await dataService.updateCalendarEvent(editingEvent.id, eventPayload);
       } else {
-        ({ error } = await supabase.from('calendar_events').insert([eventPayload]));
+        res = await dataService.createCalendarEvent(eventPayload);
       }
 
-      if (!error) {
+      if (res.success) {
         setSaveStatus({ type: 'success', msg: 'Termin erfolgreich gespeichert!' });
         fetchEvents();
         setTimeout(() => {
@@ -277,7 +301,7 @@ export const CalendarView = () => {
             setSaveStatus(null);
         }, 1000);
       } else {
-        setSaveStatus({ type: 'error', msg: error.message || 'Fehler beim Speichern.' });
+        setSaveStatus({ type: 'error', msg: res.error || 'Fehler beim Speichern.' });
       }
     } catch (e) {
       console.error(e);
@@ -299,10 +323,31 @@ export const CalendarView = () => {
 
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 120px)', gap: 24 }}>
-      <aside style={{ width: 280, display: 'flex', flexDirection: 'column', gap: 24 }}>
-        <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', height: 44 }} onClick={() => { setDateRange({ start: new Date(), end: new Date(Date.now() + 3600000) }); setIsModalOpen(true); }}>
+      <aside style={{ width: 280, display: 'flex', flexDirection: 'column', gap: 24, overflowY: 'auto' }}>
+        <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', height: 44, flexShrink: 0 }} onClick={() => { setDateRange({ start: new Date(), end: new Date(Date.now() + 3600000) }); setIsModalOpen(true); }}>
           <Plus size={18} /> <span style={{ marginLeft: 8 }}>Neuer Termin</span>
         </button>
+
+        <div className="card" style={{ padding: 16 }}>
+          <SectionHeader title="Geteilte Kalender" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
+            {allUsers.map(user => (
+              <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer', padding: '4px 0' }}>
+                <input 
+                  type="checkbox" 
+                  checked={selectedUserIds.includes(user.id)} 
+                  onChange={() => toggleUser(user.id)} 
+                />
+                <span style={{ 
+                  color: selectedUserIds.includes(user.id) ? 'var(--color-primary)' : 'var(--color-text-main)',
+                  fontWeight: selectedUserIds.includes(user.id) ? 600 : 400
+                }}>
+                  {user.first_name} {user.last_name}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
 
         <div className="card" style={{ padding: 16, flex: 1 }}>
           <SectionHeader title="Nächste Termine" />

@@ -208,7 +208,7 @@ export const TicketDetailView = () => {
     setSubmittingComment(true);
     setCommentError('');
     try {
-      const res = await dataService.addTicketMessage({
+      const res = await dataService.addTicketMessage(id!, {
         ticket_id: id,
         sender_id: currentUser.id,
         message: commentBody.trim(),

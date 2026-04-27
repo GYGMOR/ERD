@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Target, Plus, Search, MoreVertical, LayoutGrid, List, Phone, Mail, Globe, Filter, ArrowRight, UserCheck } from 'lucide-react';
 import { getTenantId, getUser } from '../utils/auth';
 import { dataService } from '../services/dataService';
-import { supabase } from '../utils/supabaseClient';
 import type { Lead } from '../types/entities';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
@@ -50,13 +49,13 @@ export const LeadsView = () => {
     e.preventDefault();
     if (!newLead.company_name) return;
     try {
-      const { data, error } = await supabase
-        .from('leads')
-        .insert([{ ...newLead, tenant_id: tenantId, assigned_to: currentUser?.id }])
-        .select()
-        .single();
-      if (!error && data) {
-        setLeads([data, ...leads]);
+      const res = await dataService.createLead({ 
+        ...newLead, 
+        tenant_id: tenantId, 
+        assigned_to: currentUser?.id 
+      });
+      if (res.success && res.data) {
+        setLeads([res.data, ...leads]);
         setShowModal(false);
         setNewLead({ status: 'new', company_name: '', contact_name: '', contact_email: '', industry: '' });
       }
@@ -67,11 +66,8 @@ export const LeadsView = () => {
 
   const updateLeadStatus = async (id: string, newStatus: string) => {
     try {
-      const { error } = await supabase
-        .from('leads')
-        .update({ status: newStatus })
-        .eq('id', id);
-      if (!error) {
+      const res = await dataService.updateLead(id, { status: newStatus });
+      if (res.success) {
         setLeads(leads.map(l => (l.id === id ? { ...l, status: newStatus } : l)));
       }
     } catch (err) {

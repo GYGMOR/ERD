@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Ticket, Plus, Search, Filter, MessageSquare, Clock, AlertCircle } from 'lucide-react';
-import { supabase } from '../../utils/supabaseClient';
-import { getUser } from '../../utils/auth';
+import { dataService } from '../../services/dataService';
 
 export const Tickets = () => {
   const navigate = useNavigate();
@@ -13,16 +12,8 @@ export const Tickets = () => {
   useEffect(() => {
     const fetchTickets = async () => {
       try {
-        const user = getUser();
-        if (!user?.id) { setLoading(false); return; }
-
-        const { data, error } = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('customer_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (!error && data) setTickets(data);
+        const res = await dataService.getPortalTickets();
+        if (res.success) setTickets(res.data || []);
       } catch (err) {
         console.error('Failed to fetch tickets', err);
       } finally {

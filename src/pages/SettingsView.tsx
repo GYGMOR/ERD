@@ -5,7 +5,6 @@ import {
 } from 'lucide-react';
 import { getTenantId } from '../utils/auth';
 import { dataService } from '../services/dataService';
-import { supabase } from '../utils/supabaseClient';
 
 const SectionHeader = ({ title, description }: { title: string, description?: string }) => (
   <div style={{ marginBottom: 24 }}>
@@ -144,26 +143,12 @@ export const SettingsView = () => {
   const handleSave = async (category: string, config: any) => {
     setSaving(true);
     try {
-      const tenantId = getTenantId();
-      if (!tenantId) throw new Error('No tenant ID');
-
-      for (const [key, value] of Object.entries(config)) {
-        if (value === '********') continue; 
-        
-        const isSecret = key.toLowerCase().includes('password') || key.toLowerCase().includes('pass') || key.toLowerCase().includes('secret');
-        
-        await supabase
-          .from('system_settings')
-          .upsert({ 
-            tenant_id: tenantId,
-            category, 
-            key, 
-            value,
-            is_secret: isSecret,
-            updated_at: new Date().toISOString()
-          }, { onConflict: 'tenant_id,category,key' });
+      const res = await dataService.updateSettings(category, config);
+      if (res.success) {
+        alert('Einstellungen für ' + category + ' gespeichert!');
+      } else {
+        alert('Fehler beim Speichern: ' + res.error);
       }
-      alert('Einstellungen für ' + category + ' gespeichert!');
     } catch (e) {
       console.error(e);
       alert('Fehler beim Speichern.');
@@ -174,10 +159,19 @@ export const SettingsView = () => {
 
   const testConnection = async () => {
     setTestLoading(true);
-    setTimeout(() => {
-      setTestResult({ success: true, message: 'Direktverbindung zu Supabase ist aktiv.' });
+    try {
+      const res = await fetch('/api/health');
+      const data = await res.json();
+      if (data.success) {
+        setTestResult({ success: true, message: 'Verbindung zum Express-Backend (PostgreSQL) ist aktiv.' });
+      } else {
+        setTestResult({ success: false, message: 'Backend meldet Fehler.' });
+      }
+    } catch (e) {
+      setTestResult({ success: false, message: 'Backend nicht erreichbar.' });
+    } finally {
       setTestLoading(false);
-    }, 800);
+    }
   };
 
   const sendTestEmail = async () => {

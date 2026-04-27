@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { CreditCard, Download, ExternalLink, Filter, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
-import { supabase } from '../../utils/supabaseClient';
+import { dataService } from '../../services/dataService';
 
 export const Invoices = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
@@ -9,11 +9,8 @@ export const Invoices = () => {
   useEffect(() => {
     const fetchInvoices = async () => {
       try {
-        const { data, error } = await supabase
-          .from('invoices')
-          .select('*')
-          .order('issue_date', { ascending: false });
-        if (!error && data) setInvoices(data);
+        const res = await dataService.getPortalInvoices();
+        if (res.success) setInvoices(res.data || []);
       } catch (err) {
         console.error('Failed to fetch invoices', err);
       } finally {

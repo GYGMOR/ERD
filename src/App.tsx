@@ -21,6 +21,7 @@ import { AccountingView } from './pages/AccountingView';
 import { BusinessCardView } from './pages/BusinessCardView';
 import { CustomerTimelineView } from './pages/CustomerTimelineView';
 import { ProjectsView } from './pages/ProjectsView';
+import { ProjectDetailView } from './pages/ProjectDetailView';
 import { QuotesView } from './pages/QuotesView';
 import { SettingsView } from './pages/SettingsView';
 import { UsersView } from './pages/UsersView';
@@ -44,7 +45,6 @@ import { Calendar as CustomerCalendar } from './pages/portal/Calendar';
 
 import { getUser, clearAuth, hasRole, isInternal } from './utils/auth';
 import type { UserRole } from './types/entities';
-import { supabase } from './utils/supabaseClient';
 
 // ─── Theme Toggle ─────────────────────────────────────────────────────────────
 const ThemeToggle = () => {
@@ -225,32 +225,33 @@ const AppChild = () => {
           console.log('MSAL Redirect Response received:', response);
           instance.setActiveAccount(response.account);
 
-          const email = response.account.username;
           
-          // --- 1. Supabase-basierte Authentifizierung (statt /api) ---
-          const { data: user, error: userError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('email', email)
-            .single();
+          // --- 1. Backend-basierte Authentifizierung (/api/auth/msal-sync) ---
+          const syncResponse = await fetch('/api/auth/msal-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: response.account.username,
+              azure_ad_id: response.account.localAccountId,
+              firstName: response.account.name?.split(' ')[0] || '',
+              lastName: response.account.name?.split(' ').slice(1).join(' ') || ''
+            })
+          });
 
-          if (userError || !user) {
-            console.error('User not found in Supabase:', userError);
-            alert('Kein NexService-Konto für ' + email + ' gefunden.');
+          const syncData = await syncResponse.json();
+
+          if (!syncData.success || !syncData.user) {
+            console.error('User sync failed:', syncData.error);
+            alert('Kein NexService-Konto gefunden: ' + (syncData.error || 'Serverfehler'));
             setIsProcessingAuth(false);
             return;
           }
 
+          const { token, user } = syncData;
+
           // --- 2. Lokalen Status setzen ---
-          localStorage.setItem('token', 'dummy-token-for-ghpages'); 
-          localStorage.setItem('user', JSON.stringify({
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            firstName: user.first_name,
-            lastName: user.last_name,
-            tenant_id: user.tenant_id
-          }));
+          localStorage.setItem('token', token); 
+          localStorage.setItem('user', JSON.stringify(user));
 
           setIsAuthenticated(true);
           window.location.hash = '#/'; 
@@ -307,7 +308,7 @@ const AppChild = () => {
           <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
           <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
           <Route path="/portal/projects" element={<CustomerProjects />} />
-          <Route path="/portal/projects/:id" element={<Placeholder title="Projekt-Details" icon={FolderOpen} />} />
+          <Route path="/portal/projects/:id" element={<ProjectDetailView />} />
           <Route path="/portal/offers" element={<CustomerOffers />} />
           <Route path="/portal/invoices" element={<CustomerInvoices />} />
           <Route path="/portal/contracts" element={<CustomerContracts />} />
@@ -336,7 +337,7 @@ const AppChild = () => {
           <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
           <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
           <Route path="/portal/projects" element={<CustomerProjects />} />
-          <Route path="/portal/projects/:id" element={<Placeholder title="Projekt-Details" icon={FolderOpen} />} />
+          <Route path="/portal/projects/:id" element={<ProjectDetailView />} />
           <Route path="/portal/offers" element={<CustomerOffers />} />
           <Route path="/portal/invoices" element={<CustomerInvoices />} />
           <Route path="/portal/contracts" element={<CustomerContracts />} />
@@ -402,6 +403,7 @@ const AppChild = () => {
             <Route path="/tickets/:id" element={<TicketDetailView />} />
             <Route path="/calendar" element={isInternal() ? <CalendarView /> : <Placeholder title="Kein Zugriff" icon={Calendar} />} />
             <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+            <Route path="/projects/:id" element={isInternal() ? <ProjectDetailView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
             <Route path="/knowledge" element={<KnowledgeBaseView />} />
             <Route path="/customers" element={<CustomersView />} />
             <Route path="/customers/:id" element={<CustomerDetailView />} />

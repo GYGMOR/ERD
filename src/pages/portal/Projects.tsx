@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FolderOpen, Calendar, Clock, ArrowRight, Activity, Files } from 'lucide-react';
-import { supabase } from '../../utils/supabaseClient';
+import { dataService } from '../../services/dataService';
 
 export const Projects = () => {
   const navigate = useNavigate();
@@ -11,12 +11,8 @@ export const Projects = () => {
   useEffect(() => {
     const fetchProjects = async () => {
       try {
-        const { data, error } = await supabase
-          .from('projects')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (!error && data) setProjects(data);
+        const res = await dataService.getPortalProjects();
+        if (res.success) setProjects(res.data || []);
       } catch (err) {
         console.error('Failed to fetch projects', err);
       } finally {

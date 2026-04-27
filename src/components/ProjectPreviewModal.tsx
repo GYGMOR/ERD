@@ -119,7 +119,7 @@ export const ProjectPreviewModal = ({ project, onClose }: ProjectPreviewModalPro
         {/* Footer / Actions */}
         <div style={{ padding: '20px 32px', borderTop: '1px solid var(--color-border)', display: 'flex', justifyContent: 'flex-end', gap: 12, backgroundColor: 'var(--color-surface-hover)' }}>
           <button onClick={onClose} className="btn-secondary">Schliessen</button>
-          <button className="btn-primary" onClick={() => (window.location.href = `/projects/${project.id}`)}>
+          <button className="btn-primary" onClick={() => navigate(`/projects/${project.id}`)}>
             Zum Vollbild-Modus
           </button>
         </div>
