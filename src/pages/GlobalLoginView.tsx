@@ -114,12 +114,12 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
     <div className="login-wrapper" style={{ height: '100vh', width: '100vw', display: 'flex', backgroundColor: 'var(--color-surface)', overflow: 'hidden' }}>
       <style>{`
         @media (max-width: 900px) {
-          .login-brand-side { display: none; }
-          .login-form-side { flex: 1; width: 100%; }
+          .login-brand-side { display: none !important; }
+          .login-form-side { flex: 1 !important; width: 100% !important; }
         }
         @media (max-width: 480px) {
-          .login-form-container { padding: 20px; }
-          .login-form-side { padding: 20px; }
+          .login-form-container { padding: 20px !important; }
+          .login-form-side { padding: 20px !important; }
         }
       `}</style>
       

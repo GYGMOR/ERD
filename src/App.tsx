@@ -399,7 +399,7 @@ const AppChild = () => {
             </div>
             <style>{`
               @media (max-width: 640px) {
-                .search-container-desktop { display: none; }
+                .search-container-desktop { display: none !important; }
               }
             `}</style>
           </div>
@@ -419,7 +419,7 @@ const AppChild = () => {
             </div>
             <style>{`
               @media (max-width: 480px) {
-                .user-profile-text { display: none; }
+                .user-profile-text { display: none !important; }
               }
             `}</style>
           </div>
