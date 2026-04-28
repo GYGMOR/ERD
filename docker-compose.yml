@@ -1,8 +1,9 @@
 services:
   app:
     image: ghcr.io/gygmor/erd:latest
-    ports:
-      - "3002:3001"
+    container_name: tool_app
+    networks:
+      - web
     env_file:
       - .env
     restart: always
@@ -13,3 +14,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --interval 30 --cleanup
     restart: always
+
+networks:
+  web:
+    external: true
