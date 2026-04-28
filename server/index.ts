@@ -391,12 +391,12 @@ app.get('/api/notifications', authenticateToken, async (req: AuthenticatedReques
 
 app.patch('/api/notifications/:id/read', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
-  const { id: userId } = req.user!;
   try {
-    // Ensure the notification belongs to the user or their role
-    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE id = $1', [id]);
+    const result = await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE id = $1 RETURNING *', [id]);
+    console.log(`Notification ${id} marked as read. Rows affected: ${result.rowCount}`);
     res.status(200).json({ success: true });
   } catch (error) {
+    console.error('Error marking notification as read:', error);
     res.status(500).json({ success: false, error: 'Failed to update notification' });
   }
 });
@@ -404,9 +404,15 @@ app.patch('/api/notifications/:id/read', authenticateToken, async (req: Authenti
 app.post('/api/notifications/read-all', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { id: userId, role } = req.user!;
-    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId, role]);
-    res.status(200).json({ success: true });
+    console.log(`Marking all read for user ${userId} with role ${role}`);
+    const result = await pool.query(
+      'UPDATE notifications SET is_read = true, updated_at = NOW() WHERE (user_id = $1 OR target_role = $2 OR (target_role = \'admin\' AND $2 = \'admin\')) AND is_read = false', 
+      [userId, role]
+    );
+    console.log(`Marked ${result.rowCount} notifications as read.`);
+    res.status(200).json({ success: true, count: result.rowCount });
   } catch (error) {
+    console.error('Error marking all notifications as read:', error);
     res.status(500).json({ success: false, error: 'Failed to update notifications' });
   }
 });
@@ -1018,7 +1024,8 @@ app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, r
 });
 
 app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id } = req.body;
+  const { name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id } = req.body;
+  const { tenant_id } = req.user!;
   try {
     const result = await pool.query(
       `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id)
@@ -1126,6 +1133,8 @@ app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: 
     const { tenant_id } = req.user!;
     const { parent_id, entity_type, entity_id } = req.query;
 
+    console.log(`Fetching files for tenant ${tenant_id}, type=${entity_type}, id=${entity_id}, parent=${parent_id}`);
+
     let query = `SELECT * FROM files WHERE tenant_id = $1`;
     const params: any[] = [tenant_id];
 
@@ -1133,7 +1142,7 @@ app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: 
       query += ` AND entity_type = $${params.length + 1}`;
       params.push(entity_type);
     }
-    if (entity_id) {
+    if (entity_id && entity_id !== 'null') {
       query += ` AND entity_id = $${params.length + 1}`;
       params.push(entity_id);
     }
@@ -1157,12 +1166,23 @@ app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: 
 app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { name, parent_id, entity_type, entity_id } = req.body;
   const { tenant_id, id: userId } = req.user!;
+  
+  console.log(`Creating folder: ${name} for tenant ${tenant_id} (entity_id: ${entity_id})`);
+  
   try {
     const result = await pool.query(
       `INSERT INTO files (tenant_id, file_name, is_folder, parent_id, entity_type, entity_id, uploaded_by, file_type)
        VALUES ($1, $2, true, $3, $4, $5, $6, 'folder') RETURNING *`,
-      [tenant_id, name, parent_id || null, entity_type || 'general', entity_id || null, userId]
+      [
+        tenant_id, 
+        name, 
+        parent_id && parent_id !== 'null' ? parent_id : null, 
+        entity_type || 'general', 
+        entity_id && entity_id !== 'null' ? entity_id : null, 
+        userId
+      ]
     );
+    console.log(`Folder created successfully: ${result.rows[0].id}`);
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating folder:', error);
@@ -1176,6 +1196,8 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
   const { parent_id, entity_type, entity_id } = req.body;
   const { tenant_id, id: userId } = req.user!;
 
+  console.log(`Uploading file: ${req.file.originalname} for tenant ${tenant_id}`);
+
   try {
     const result = await pool.query(
       `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, is_folder, parent_id, entity_type, entity_id, uploaded_by)
@@ -1186,12 +1208,13 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
         `/uploads/${req.file.filename}`, 
         req.file.mimetype, 
         req.file.size,
-        parent_id || null,
+        parent_id && parent_id !== 'null' ? parent_id : null,
         entity_type || 'general',
-        entity_id || null,
+        entity_id && entity_id !== 'null' ? entity_id : null,
         userId
       ]
     );
+    console.log(`File uploaded successfully: ${result.rows[0].id}`);
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Upload error:', error);
@@ -1205,7 +1228,7 @@ app.delete('/api/files/:id', authenticateToken, async (req: AuthenticatedRequest
   try {
     const fileResult = await pool.query('SELECT file_path FROM files WHERE id = $1 AND tenant_id = $2', [id, tenant_id]);
     if (fileResult.rows.length > 0 && fileResult.rows[0].file_path) {
-       const fullPath = path.join(__dirname, '..', fileResult.rows[0].file_path);
+       const fullPath = path.join(uploadDir, path.basename(fileResult.rows[0].file_path));
        fs.remove(fullPath).catch(err => console.error('Error deleting file from disk:', err));
     }
 
