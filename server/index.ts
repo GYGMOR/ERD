@@ -1180,7 +1180,7 @@ app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedReque
   try {
     const result = await pool.query(
       `INSERT INTO files (tenant_id, file_name, is_folder, parent_id, entity_type, entity_id, uploaded_by, file_type)
-       VALUES ($1, $2, true, $3, $4, $5, $6, 'folder') RETURNING *`,
+       VALUES ($1::UUID, $2, true, $3::UUID, $4, $5::UUID, $6::UUID, 'folder') RETURNING *`,
       [
         tenant_id, 
         name, 
@@ -1209,7 +1209,7 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
   try {
     const result = await pool.query(
       `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, is_folder, parent_id, entity_type, entity_id, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8, $9) RETURNING *`,
+       VALUES ($1::UUID, $2, $3, $4, $5, false, $6::UUID, $7, $8::UUID, $9::UUID) RETURNING *`,
       [
         tenant_id, 
         req.file.originalname, 
