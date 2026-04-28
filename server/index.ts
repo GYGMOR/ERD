@@ -100,7 +100,8 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     console.error('Error connecting to the database', err.stack);
   } else {
     console.log('Connected to Database successfully.');
-    // Ensure password reset columns exist
+    // Ensure extensions and password reset columns exist
+    pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(err => console.error('Error creating pgcrypto:', err));
     pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT, ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP').catch(err => console.error('Error adding reset columns:', err));
     
     // Project logs table
