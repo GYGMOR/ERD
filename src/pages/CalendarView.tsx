@@ -95,6 +95,14 @@ export const CalendarView = () => {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
+  const [selectedDay, setSelectedDay] = useState<Date>(new Date());
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Fetching Logic
   useEffect(() => {
@@ -327,31 +335,110 @@ export const CalendarView = () => {
         </aside>
 
         {/* Calendar Main Grid */}
-        <div style={{ ...cardStyle, flex: 1, position: 'relative' }}>
+        <div style={{ ...cardStyle, flex: 1, position: 'relative', overflow: 'hidden' }}>
           {view === 'month' && (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              {/* Day Headers */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)' }}>
-                {DAYS_DE.map(d => (
-                  <div key={d} style={{ padding: '12px', fontSize: 11, fontWeight: 800, textAlign: 'center', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{d}</div>
-                ))}
+            <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', overflowY: 'auto' }}>
+              {/* Calendar Grid */}
+              <div style={{ flex: isMobile ? 'none' : 1, borderRight: isMobile ? 'none' : '1px solid var(--color-border)' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
+                  {DAYS_DE.map(d => (
+                    <div key={d} style={{ padding: '8px 0', textAlign: 'center', fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{d}</div>
+                  ))}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', backgroundColor: 'var(--color-border)', gap: '0px' }}>
+                  {monthDays.map((d, i) => {
+                    const isCurrentMonth = d.getMonth() === currentDate.getMonth();
+                    const isToday = d.toDateString() === new Date().toDateString();
+                    const isSelected = d.toDateString() === selectedDay.toDateString();
+                    const dayEvents = events.filter(e => new Date(e.start_time).toDateString() === d.toDateString());
+                    
+                    return (
+                      <div 
+                        key={i} 
+                        onClick={() => { setSelectedDay(d); if (!isMobile) handleDayClick(d); }}
+                        style={{ 
+                          minHeight: isMobile ? '50px' : 'min(120px, 15vh)',
+                          padding: '4px',
+                          backgroundColor: isSelected ? 'rgba(0, 82, 204, 0.08)' : (isToday ? 'rgba(0, 82, 204, 0.03)' : (isCurrentMonth ? 'var(--color-surface)' : 'var(--color-surface-hover)')),
+                          borderRight: '1px solid var(--color-border)',
+                          borderBottom: '1px solid var(--color-border)',
+                          position: 'relative',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <div style={{ 
+                          fontSize: 12, 
+                          fontWeight: isToday || isSelected ? 800 : 500, 
+                          width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: isSelected ? 'var(--color-primary)' : (isToday ? 'rgba(0, 82, 204, 0.1)' : 'transparent'),
+                          color: isSelected ? 'white' : (isToday ? 'var(--color-primary)' : (isCurrentMonth ? 'var(--color-text-main)' : 'var(--color-text-muted)')),
+                          marginBottom: 4
+                        }}>
+                          {d.getDate()}
+                        </div>
+                        {!isMobile && (
+                          <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {dayEvents.slice(0, 3).map(e => (
+                              <div key={e.id} style={{ fontSize: 9, padding: '2px 4px', backgroundColor: e.color || 'var(--color-primary)', color: 'white', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {e.title}
+                              </div>
+                            ))}
+                            {dayEvents.length > 3 && <div style={{ fontSize: 8, color: 'var(--color-text-muted)', textAlign: 'center' }}>+ {dayEvents.length - 3}</div>}
+                          </div>
+                        )}
+                        {isMobile && dayEvents.length > 0 && (
+                          <div style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: 'var(--color-primary)', marginTop: 2 }} />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              {/* Grid Body */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', flex: 1, overflowY: 'auto' }}>
-                {monthDays.map((d, i) => (
-                  <MonthCell 
-                    key={i}
-                    date={d}
-                    isCurrentMonth={d.getMonth() === currentDate.getMonth()}
-                    isToday={d.toDateString() === new Date().toDateString()}
-                    events={events.filter(e => new Date(e.start_time).toDateString() === d.toDateString())}
-                    onClick={handleDayClick}
-                  />
-                ))}
-              </div>
+
+              {/* Mobile Agenda View (Outlook Style) */}
+              {isMobile && (
+                <div style={{ padding: 16, backgroundColor: 'var(--color-surface)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>{selectedDay.toLocaleDateString('de-CH', { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
+                    <button className="btn-primary" onClick={() => handleDayClick(selectedDay)} style={{ padding: '4px 8px', fontSize: 12 }}>
+                       <Plus size={14} />
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {events.filter(e => new Date(e.start_time).toDateString() === selectedDay.toDateString()).length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--color-text-muted)', fontSize: 13, backgroundColor: 'var(--color-surface-hover)', borderRadius: 'var(--radius-md)' }}>
+                        Keine Termine für diesen Tag.
+                      </div>
+                    ) : (
+                      events.filter(e => new Date(e.start_time).toDateString() === selectedDay.toDateString()).map(e => (
+                        <div 
+                          key={e.id} 
+                          onClick={() => { setEditingEvent(e); setIsModalOpen(true); }}
+                          style={{ 
+                            display: 'flex', gap: 12, padding: 12, borderRadius: 'var(--radius-md)', 
+                            backgroundColor: 'var(--color-surface-hover)', borderLeft: `4px solid ${e.color || 'var(--color-primary)'}`,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <div style={{ minWidth: 45, fontSize: 12, fontWeight: 700, color: 'var(--color-text-muted)' }}>
+                            {new Date(e.start_time).toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 14 }}>{e.title}</div>
+                            {e.description && <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>{e.description}</div>}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
-
+          
           {view === 'week' && <TimeGrid dates={weekDays} />}
           {view === 'day' && <TimeGrid dates={[currentDate]} />}
 

@@ -29,6 +29,11 @@ export function getUser(): AuthUser | null {
   return raw ? (JSON.parse(raw) as AuthUser) : null;
 }
 
+/** Return the raw JWT token */
+export function getToken(): string | null {
+  return localStorage.getItem('token');
+}
+
 /** Decode the JWT and return the payload (no signature verification – client side only) */
 export function getTokenPayload(): TokenPayload | null {
   const token = localStorage.getItem('token');

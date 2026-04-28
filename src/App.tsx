@@ -28,6 +28,8 @@ import { UsersView } from './pages/UsersView';
 import { CalendarView } from './pages/CalendarView';
 import { GlobalLoginView } from './pages/GlobalLoginView';
 import { ClientLoginView } from './pages/ClientLoginView';
+import { DocumentsView } from './pages/DocumentsView';
+import { PerformanceView } from './pages/PerformanceView';
 
 // --- Customer Portal Views ---
 import { CustomerLayout } from './layouts/CustomerLayout';
@@ -117,6 +119,9 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/tickets', icon: Ticket, label: 'Tickets' },
       { to: '/calendar', icon: Calendar, label: 'Kalender', roles: ['admin', 'manager', 'employee'] },
       { to: '/projects', icon: FolderOpen, label: 'Projekte', roles: ['admin', 'manager', 'employee'] },
+      { to: '/performance', icon: Activity, label: 'Performance', roles: ['admin', 'manager'] },
+      { to: '/documents', icon: FolderOpen, label: 'Dokumente', roles: ['admin', 'manager', 'employee'] },
+      { to: '/documents', icon: FolderOpen, label: 'Dokumente', roles: ['admin', 'manager', 'employee'] },
       { to: '/knowledge', icon: BookOpen, label: 'Knowledge Base' },
     ],
   },
@@ -446,6 +451,8 @@ const AppChild = () => {
             <Route path="/calendar" element={isInternal() ? <CalendarView /> : <Placeholder title="Kein Zugriff" icon={Calendar} />} />
             <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
             <Route path="/projects/:id" element={isInternal() ? <ProjectDetailView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+            <Route path="/performance" element={hasRole(['admin', 'manager']) ? <PerformanceView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
+            <Route path="/documents" element={isInternal() ? <DocumentsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
             <Route path="/knowledge" element={<KnowledgeBaseView />} />
             <Route path="/customers" element={<CustomersView />} />
             <Route path="/customers/:id" element={<CustomerDetailView />} />

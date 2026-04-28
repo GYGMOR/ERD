@@ -5,8 +5,9 @@ import { QuotePreviewModal } from '../components/QuotePreviewModal';
 import { ContractPreviewModal } from '../components/ContractPreviewModal';
 import { ContactPreviewModal } from '../components/ContactPreviewModal';
 import type { Company, Ticket as TicketType, Invoice, Contact, Contract } from '../types/entities';
+import { DocumentExplorer } from '../components/DocumentExplorer';
 
-type Tab = 'tickets' | 'invoices' | 'contracts' | 'contacts';
+type Tab = 'tickets' | 'invoices' | 'contracts' | 'contacts' | 'documents';
 
 const PRIORITY_CLS: Record<string, string> = { low: 'success', medium: 'info', high: 'warning', critical: 'danger' };
 const PRIORITY_LABEL: Record<string, string> = { low: 'Niedrig', medium: 'Mittel', high: 'Hoch', critical: 'Kritisch' };
@@ -158,6 +159,7 @@ export const CustomerDetailView = () => {
         <TabButton active={activeTab === 'invoices'} icon={FileText} label="Rechnungen" count={invoices.length} onClick={() => setActiveTab('invoices')} />
         <TabButton active={activeTab === 'contracts'} icon={FileSignature} label="Verträge" count={contracts.length} onClick={() => setActiveTab('contracts')} />
         <TabButton active={activeTab === 'contacts'} icon={Users} label="Kontakte" count={contacts.length} onClick={() => setActiveTab('contacts')} />
+        <TabButton active={activeTab === 'documents'} icon={FileText} label="Dokumente" count={0} onClick={() => setActiveTab('documents')} />
       </div>
 
       {/* Tab: Tickets */}
@@ -304,6 +306,10 @@ export const CustomerDetailView = () => {
             </div>
           )}
         </div>
+      )}
+      {/* Tab: Documents */}
+      {activeTab === 'documents' && (
+        <DocumentExplorer entityType="company" entityId={id!} />
       )}
 
       {/* Modals */}

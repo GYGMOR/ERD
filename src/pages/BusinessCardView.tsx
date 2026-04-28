@@ -97,13 +97,17 @@ export const BusinessCardView = () => {
                   <span style={{ color: gold, fontSize: 44, fontWeight: 300 }}>()</span>
                   <span style={{ fontSize: 38, fontWeight: 600, letterSpacing: '0.02em' }}>Gross ICT</span>
                </div>
-               <div style={{ textAlign: 'center' }}>
-                  <p style={{ fontSize: 14, color: '#ccc', margin: '4px 0', fontWeight: 500 }}>IT Solutions & Managed Services for Businesses</p>
-                  <p style={{ fontSize: 14, color: '#ccc', margin: '4px 0', fontWeight: 500 }}>Wir bringen Ihr Unternehmen ins Web.</p>
-               </div>
-               <div style={{ marginTop: 40 }}>
-                  <span style={{ color: gold, fontSize: 15, fontWeight: 600, letterSpacing: '0.1em' }}>WWW.GROSS-ICT.CH</span>
-               </div>
+                <div style={{ textAlign: 'center' }}>
+                   <p style={{ color: gold, fontSize: 13, fontWeight: 700, textTransform: 'uppercase', marginBottom: 20 }}>Visitenkarte Scannen</p>
+                   <div style={{ backgroundColor: 'white', padding: 20, borderRadius: 'var(--radius-lg)', display: 'inline-block', boxShadow: '0 10px 30px rgba(0,0,0,0.3)' }}>
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(generateVCard())}`} 
+                        alt="Contact QR Code" 
+                        style={{ width: 180, height: 180 }}
+                      />
+                   </div>
+                   <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, marginTop: 20 }}>NexusService • www.gross-ict.ch</p>
+                </div>
             </div>
 
           </div>

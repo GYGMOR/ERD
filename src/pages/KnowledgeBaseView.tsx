@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Plus, Search, Filter, Clock, ChevronRight, Tag, Eye } from 'lucide-react';
+import { BookOpen, Plus, Search, Filter, Clock, ChevronRight, Tag, Eye, FileText } from 'lucide-react';
+import { DocumentExplorer } from '../components/DocumentExplorer';
 import { getTenantId } from '../utils/auth';
 import type { KbArticle } from '../types/entities';
 
@@ -7,7 +8,7 @@ export const KnowledgeBaseView = () => {
   const [articles, setArticles] = useState<KbArticle[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<'articles' | 'documents'>('articles');
   const [showModal, setShowModal] = useState(false);
   const [newArticle, setNewArticle] = useState<Partial<KbArticle>>({
     title: '',
@@ -91,78 +92,123 @@ export const KnowledgeBaseView = () => {
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button
-                onClick={() => setSelectedCategory(null)}
+                onClick={() => setActiveView('articles')}
                 style={{
                   textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
-                  backgroundColor: selectedCategory === null ? 'var(--color-surface-hover)' : 'transparent',
-                  color: selectedCategory === null ? 'var(--color-primary)' : 'var(--color-text-main)',
-                  fontWeight: selectedCategory === null ? 600 : 400
+                  backgroundColor: activeView === 'articles' ? 'var(--color-surface-hover)' : 'transparent',
+                  color: activeView === 'articles' ? 'var(--color-primary)' : 'var(--color-text-main)',
+                  fontWeight: activeView === 'articles' ? 600 : 400,
+                  display: 'flex', alignItems: 'center', gap: 8
                 }}
               >
-                Alle Artikel
+                <BookOpen size={14} /> Artikel
               </button>
-              {categories.map(cat => (
-                <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  style={{
-                    textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
-                    backgroundColor: selectedCategory === cat ? 'var(--color-surface-hover)' : 'transparent',
-                    color: selectedCategory === cat ? 'var(--color-primary)' : 'var(--color-text-main)',
-                    fontWeight: selectedCategory === cat ? 600 : 400
-                  }}
-                >
-                  {cat}
-                </button>
-              ))}
+              <button
+                onClick={() => setActiveView('documents')}
+                style={{
+                  textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
+                  backgroundColor: activeView === 'documents' ? 'var(--color-surface-hover)' : 'transparent',
+                  color: activeView === 'documents' ? 'var(--color-primary)' : 'var(--color-text-main)',
+                  fontWeight: activeView === 'documents' ? 600 : 400,
+                  display: 'flex', alignItems: 'center', gap: 8
+                }}
+              >
+                <FileText size={14} /> Handbücher & Dateien
+              </button>
+              
+              {activeView === 'articles' && (
+                <>
+                  <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: '8px 0' }} />
+                  <button
+                    onClick={() => setSelectedCategory(null)}
+                    style={{
+                      textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
+                      backgroundColor: selectedCategory === null ? 'var(--color-surface-hover)' : 'transparent',
+                      color: selectedCategory === null ? 'var(--color-primary)' : 'var(--color-text-main)',
+                      fontWeight: selectedCategory === null ? 600 : 400
+                    }}
+                  >
+                    Alle Artikel
+                  </button>
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedCategory(cat)}
+                      style={{
+                        textAlign: 'left', padding: '8px 12px', borderRadius: 'var(--radius-sm)', fontSize: 13,
+                        backgroundColor: selectedCategory === cat ? 'var(--color-surface-hover)' : 'transparent',
+                        color: selectedCategory === cat ? 'var(--color-primary)' : 'var(--color-text-main)',
+                        fontWeight: selectedCategory === cat ? 600 : 400
+                      }}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </>
+              )}
             </div>
           </div>
         </aside>
 
         <main>
-          <div className="card" style={{ marginBottom: 20, padding: 12 }}>
-            <div style={{ position: 'relative' }}>
-              <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-              <input
-                type="text"
-                placeholder="Knowledge Base durchsuchen..."
-                className="input-field"
-                style={{ paddingLeft: 36, border: 'none', backgroundColor: 'var(--color-background)' }}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>Lade Artikel...</div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {filtered.length === 0 ? (
-                <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>
-                  Keine Artikel gefunden.
+          {activeView === 'articles' ? (
+            <>
+              <div className="card" style={{ marginBottom: 20, padding: 12 }}>
+                <div style={{ position: 'relative' }}>
+                  <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+                  <input
+                    type="text"
+                    placeholder="Knowledge Base durchsuchen..."
+                    className="input-field"
+                    style={{ paddingLeft: 36, border: 'none', backgroundColor: 'var(--color-background)' }}
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
-              ) : filtered.map(article => (
-                <div key={article.id} className="card hover-bg-row" style={{ padding: 16, cursor: 'pointer', transition: 'all 0.2s ease' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <h3 style={{ fontSize: 15, fontWeight: 700 }}>{article.title}</h3>
-                        {article.is_internal && <span className="badge info" style={{ fontSize: 9 }}>Intern</span>}
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Tag size={12} /> {article.category || 'Allgemein'}</span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {new Date(article.updated_at).toLocaleDateString('de-CH')}</span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Eye size={12} /> 0 Aufrufe</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: 'var(--color-text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                        {article.content.replace(/<[^>]*>/g, '')}
+              </div>
+
+              {loading ? (
+                <div style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>Lade Artikel...</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {filtered.length === 0 ? (
+                    <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>
+                      Keine Artikel gefunden.
+                    </div>
+                  ) : filtered.map(article => (
+                    <div key={article.id} className="card hover-bg-row" style={{ padding: 16, cursor: 'pointer', transition: 'all 0.2s ease' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <h3 style={{ fontSize: 15, fontWeight: 700 }}>{article.title}</h3>
+                            {article.is_internal && <span className="badge info" style={{ fontSize: 9 }}>Intern</span>}
+                          </div>
+                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Tag size={12} /> {article.category || 'Allgemein'}</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {new Date(article.updated_at).toLocaleDateString('de-CH')}</span>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Eye size={12} /> 0 Aufrufe</span>
+                          </div>
+                          <div style={{ fontSize: 13, color: 'var(--color-text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                            {article.content.replace(/<[^>]*>/g, '')}
+                          </div>
+                        </div>
+                        <ChevronRight size={20} color="var(--color-border)" />
                       </div>
                     </div>
-                    <ChevronRight size={20} color="var(--color-border)" />
-                  </div>
+                  ))}
                 </div>
-              ))}
+              )}
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+               <div className="card" style={{ padding: 24 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Anleitungen & Handbücher</h3>
+                  <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 24 }}>
+                    Hier findest du alle wichtigen PDF-Anleitungen, Word-Vorlagen und Excel-Tabellen. 
+                    Organisiere sie in Ordnern wie "Intern" und "Extern".
+                  </p>
+                  <DocumentExplorer entityType="kb" entityId="00000000-0000-0000-0000-000000000000" />
+               </div>
             </div>
           )}
         </main>

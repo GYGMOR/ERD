@@ -182,6 +182,7 @@ export const ProjectsView = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [viewMode, setViewMode] = useState<'list' | 'kanban'>('kanban');
+  const [statusFilter, setStatusFilter] = useState('active_only');
   const [search, setSearch] = useState('');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
 
@@ -194,12 +195,10 @@ export const ProjectsView = () => {
       const data = await res.json();
       if (data.success) {
         setProjects(data.data);
-        // Deep linking: open project if openProject param is present
         const openId = searchParams.get('openProject');
         if (openId) {
           const p = data.data.find((proj: Project) => proj.id === openId);
           if (p) setSelectedProject(p);
-          // Clean up param
           searchParams.delete('openProject');
           setSearchParams(searchParams, { replace: true });
         }
@@ -217,13 +216,17 @@ export const ProjectsView = () => {
 
   const filtered = useMemo(() => {
     let list = projects;
+    if (statusFilter === 'active_only') {
+      list = list.filter(p => p.status !== 'completed' && p.status !== 'cancelled');
+    } else if (statusFilter !== 'all') {
+      list = list.filter(p => p.status === statusFilter);
+    }
     if (search) {
       const q = search.toLowerCase();
       list = list.filter(p => p.name.toLowerCase().includes(q) || (p.company_name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
     }
-    // Sort by priority weight
     return [...list].sort((a, b) => (PRIORITY_WEIGHT[b.priority] || 0) - (PRIORITY_WEIGHT[a.priority] || 0));
-  }, [projects, search]);
+  }, [projects, search, statusFilter]);
 
   const stats = {
     active: projects.filter(p => p.status === 'active').length,
@@ -249,6 +252,11 @@ export const ProjectsView = () => {
           <p style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>Projekte verwalten und Fortschritte verfolgen.</p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <select style={{ ...inputStyle, padding: '8px 12px', fontSize: 13, width: 160 }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+            <option value="active_only">Aktiver Pool</option>
+            <option value="all">Alle</option>
+            {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
           <div style={{ position: 'relative' }}>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Suchen..." style={{ padding: '8px 12px 8px 32px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)', fontSize: 13, color: 'var(--color-text-main)', outline: 'none', width: 200 }} />
             <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }}><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -322,9 +330,8 @@ export const ProjectsView = () => {
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Kunde</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Status</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Priorität</th>
-                <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Enddatum</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Verantwortlich</th>
-                <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Erstellt</th>
+                <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Enddatum</th>
               </tr>
             </thead>
             <tbody>
@@ -342,9 +349,6 @@ export const ProjectsView = () => {
                       <span style={{ padding: '3px 10px', borderRadius: 'var(--radius-pill)', fontSize: 12, fontWeight: 600, backgroundColor: sc.bg, color: sc.color }}>{sc.label}</span>
                     </td>
                     <td style={{ padding: '14px 20px' }}><span className={'badge ' + (PRIORITY_CLS[p.priority] || 'info')} style={{ fontSize: 12 }}>{PRIORITY_LABEL[p.priority]}</span></td>
-                    <td style={{ padding: '14px 20px', fontSize: 13, color: isOverdue ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: isOverdue ? 600 : 400 }}>
-                      {p.end_date ? `${isOverdue ? '⚠ ' : ''}${new Date(p.end_date).toLocaleDateString('de-CH')}` : '–'}
-                    </td>
                     <td style={{ padding: '14px 20px' }}>
                       {p.assignee_first_name ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

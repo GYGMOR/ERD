@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Package, Plus, Search, Filter, Tag, Hash, Archive } from 'lucide-react';
-import { getTenantId } from '../utils/auth';
+import { Package, Plus, Search, Filter, Tag, Hash, Archive, Folder, ChevronRight, ArrowLeft } from 'lucide-react';
+import { getTenantId, getToken } from '../utils/auth';
 import type { Product } from '../types/entities';
 
 export const ProductsView = () => {
@@ -8,6 +8,9 @@ export const ProductsView = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
+  const [folderStack, setFolderStack] = useState<{ id: string | null, name: string }[]>([{ id: null, name: 'Hauptverzeichnis' }]);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
   const [newProd, setNewProd] = useState<Partial<Product>>({
     name: '',
     price: '0',
@@ -15,13 +18,20 @@ export const ProductsView = () => {
     unit: 'Stück',
     is_recurring: false,
     is_active: true,
+    is_folder: false,
   });
 
   const tenantId = getTenantId();
 
+  const currentFolder = folderStack[folderStack.length - 1];
+
   const fetchProducts = async () => {
     try {
-      const res = await fetch('/api/products');
+      setLoading(true);
+      const parentId = currentFolder.id ? `&parent_id=${currentFolder.id}` : '&parent_id=null';
+      const res = await fetch(`/api/products?t=${Date.now()}${parentId}`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      });
       const data = await res.json();
       if (data.success) setProducts(data.data);
     } catch (err) {
@@ -33,7 +43,7 @@ export const ProductsView = () => {
 
   useEffect(() => {
     fetchProducts();
-  }, []);
+  }, [currentFolder.id]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,10 +52,15 @@ export const ProductsView = () => {
     try {
       const res = await fetch('/api/products', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
         body: JSON.stringify({
           ...newProd,
           tenant_id: tenantId,
+          parent_id: currentFolder.id,
+          is_folder: false
         }),
       });
       const data = await res.json();
@@ -56,6 +71,45 @@ export const ProductsView = () => {
       }
     } catch (err) {
       console.error('Error creating product:', err);
+    }
+  };
+
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName) return;
+
+    try {
+      const res = await fetch('/api/products', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
+        body: JSON.stringify({
+          name: newFolderName,
+          tenant_id: tenantId,
+          parent_id: currentFolder.id,
+          is_folder: true
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProducts([data.data, ...products]);
+        setShowFolderModal(false);
+        setNewFolderName('');
+      }
+    } catch (err) {
+      console.error('Error creating folder:', err);
+    }
+  };
+
+  const navigateToFolder = (id: string | null, name: string) => {
+    setFolderStack([...folderStack, { id, name }]);
+  };
+
+  const navigateBack = () => {
+    if (folderStack.length > 1) {
+      setFolderStack(folderStack.slice(0, -1));
     }
   };
 
@@ -76,9 +130,34 @@ export const ProductsView = () => {
             Zentraler Katalog aller Artikel, Lizenzen und Dienstleistungen.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}>
-          <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neues Produkt
-        </button>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button className="btn-secondary" onClick={() => setShowFolderModal(true)}>
+            <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neuer Ordner
+          </button>
+          <button className="btn-primary" onClick={() => setShowModal(true)}>
+            <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neues Produkt
+          </button>
+        </div>
+      </div>
+
+      {/* Breadcrumbs */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, fontSize: 13, color: 'var(--color-text-muted)' }}>
+        {folderStack.length > 1 && (
+           <button onClick={navigateBack} style={{ padding: 4, borderRadius: 4, backgroundColor: 'var(--color-surface-hover)', border: 'none', color: 'var(--color-text-main)', cursor: 'pointer', display: 'flex' }}>
+             <ArrowLeft size={14} />
+           </button>
+        )}
+        {folderStack.map((f, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span 
+              onClick={() => setFolderStack(folderStack.slice(0, i + 1))}
+              style={{ cursor: 'pointer', fontWeight: i === folderStack.length - 1 ? 700 : 400, color: i === folderStack.length - 1 ? 'var(--color-text-main)' : 'inherit' }}
+            >
+              {f.name}
+            </span>
+            {i < folderStack.length - 1 && <ChevronRight size={14} />}
+          </div>
+        ))}
       </div>
 
       <div className="card" style={{ marginBottom: 24, padding: '12px 16px', display: 'flex', gap: 16, alignItems: 'center' }}>
@@ -104,47 +183,93 @@ export const ProductsView = () => {
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
           {filtered.length === 0 ? (
             <div className="card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>
-              Keine Produkte gefunden.
+              Keine Produkte oder Ordner gefunden.
             </div>
           ) : filtered.map(p => (
-            <div key={p.id} className="card" style={{ opacity: p.is_active ? 1 : 0.6 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary)' }}>
-                    <Package size={20} />
+            <div 
+               key={p.id} 
+               className="card" 
+               style={{ opacity: p.is_active ? 1 : 0.6, cursor: p.is_folder ? 'pointer' : 'default', border: p.is_folder ? '1px solid var(--color-primary-light)' : '1px solid var(--color-border)' }}
+               onClick={() => p.is_folder && navigateToFolder(p.id, p.name)}
+            >
+              {p.is_folder ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', backgroundColor: 'rgba(0, 82, 204, 0.1)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Folder size={24} fill="currentColor" />
                   </div>
-                  <div>
-                    <h3 style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</h3>
-                    <div style={{ fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', gap: 8 }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><Hash size={10} /> {p.sku || 'Keine SKU'}</span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><Tag size={10} /> {p.category || 'Standard'}</span>
+                  <div style={{ flex: 1 }}>
+                    <h3 style={{ fontSize: 15, fontWeight: 700 }}>{p.name}</h3>
+                    <p style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Ordner / Kategorie</p>
+                  </div>
+                  <ChevronRight size={18} color="var(--color-text-muted)" />
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-primary)' }}>
+                        <Package size={20} />
+                      </div>
+                      <div>
+                        <h3 style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</h3>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', gap: 8 }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><Hash size={10} /> {p.sku || 'Keine SKU'}</span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}><Tag size={10} /> {p.category || 'Standard'}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {!p.is_active && <Archive size={14} color="var(--color-text-muted)" />}
+                  </div>
+                  
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16, height: 36, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+                    {p.description || 'Keine Beschreibung verfügbar.'}
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--color-text-main)' }}>
+                        {parseFloat(p.price).toFixed(2)} <span style={{ fontSize: 12, fontWeight: 500 }}>CHF</span>
+                      </div>
+                      <div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>
+                        pro {p.unit} ({p.tax_rate}% MwSt)
+                      </div>
+                    </div>
+                    <div>
+                      {p.is_recurring && (
+                        <span className="badge info" style={{ fontSize: 9, padding: '1px 5px' }}>Wiederkehrend</span>
+                      )}
                     </div>
                   </div>
-                </div>
-                {!p.is_active && <Archive size={14} color="var(--color-text-muted)" />}
-              </div>
-              
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16, height: 36, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                {p.description || 'Keine Beschreibung verfügbar.'}
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-                <div>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--color-text-main)' }}>
-                    {parseFloat(p.price).toFixed(2)} <span style={{ fontSize: 12, fontWeight: 500 }}>CHF</span>
-                  </div>
-                  <div style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>
-                    pro {p.unit} ({p.tax_rate}% MwSt)
-                  </div>
-                </div>
-                <div>
-                  {p.is_recurring && (
-                    <span className="badge info" style={{ fontSize: 9, padding: '1px 5px' }}>Wiederkehrend</span>
-                  )}
-                </div>
-              </div>
+                </>
+              )}
             </div>
           ))}
+        </div>
+      )}
+
+      {showFolderModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: 400 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Neuer Ordner</h2>
+            <form onSubmit={handleCreateFolder}>
+              <div style={{ marginBottom: 20 }}>
+                <label className="input-label">Ordnername</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  required
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="z.B. Hardware, Abos..."
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowFolderModal(false)}>Abbrechen</button>
+                <button type="submit" className="btn-primary">Ordner erstellen</button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

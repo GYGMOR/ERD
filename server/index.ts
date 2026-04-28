@@ -110,12 +110,14 @@ pool.query('SELECT NOW()', (err: Error | null) => {
       CREATE TABLE IF NOT EXISTS files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL,
-        entity_type VARCHAR(50) NOT NULL, -- 'ticket', 'project', 'contract', 'invoice'
-        entity_id UUID NOT NULL,
+        entity_type VARCHAR(50) NOT NULL, -- 'ticket', 'project', 'contract', 'invoice', 'general'
+        entity_id UUID, -- Optional if it's a general file
         file_name VARCHAR(255) NOT NULL,
-        file_path TEXT NOT NULL,
-        file_type VARCHAR(100),
+        file_path TEXT, -- Null for folders
+        file_type VARCHAR(100), -- 'folder', 'pdf', 'xlsx', 'docx', etc.
         file_size INTEGER,
+        is_folder BOOLEAN DEFAULT false,
+        parent_id UUID REFERENCES files(id) ON DELETE CASCADE,
         uploaded_by UUID REFERENCES users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -132,6 +134,10 @@ pool.query('SELECT NOW()', (err: Error | null) => {
         last_used_at TIMESTAMP
       )
     `).catch(err => console.error('Error creating api_keys table:', err));
+
+    // Products folder support
+    pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(err => console.error('Error adding is_folder to products:', err));
+    pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(err => console.error('Error adding parent_id to products:', err));
   }
 });
 
@@ -942,23 +948,38 @@ app.post('/api/contracts', async (req: express.Request, res: express.Response) =
 });
 
 // ─── Products / Produkte Routes ───────────────────────────────────────────────
-app.get('/api/products', async (req: express.Request, res: express.Response) => {
+app.get('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    const result = await pool.query('SELECT * FROM products ORDER BY name ASC');
+    const { tenant_id } = req.user!;
+    const { parent_id } = req.query;
+    
+    let query = 'SELECT * FROM products WHERE tenant_id = $1';
+    const params: any[] = [tenant_id];
+
+    if (parent_id === 'null' || !parent_id) {
+        query += ' AND parent_id IS NULL';
+    } else {
+        params.push(parent_id);
+        query += ` AND parent_id = $${params.length}`;
+    }
+
+    query += ' ORDER BY is_folder DESC, name ASC';
+    const result = await pool.query(query, params);
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     console.error('Error fetching products:', error);
-    res.status(500).json({ success: false, error: 'Server error fetching products' });
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });
 
-app.post('/api/products', async (req: express.Request, res: express.Response) => {
-  const { tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active } = req.body;
+app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id } = req.body;
+  const { tenant_id } = req.user!;
   try {
     const result = await pool.query(
-      `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [tenant_id, name, sku, category, description, price, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true]
+      `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [tenant_id, name, sku, category, description, price || 0, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true, is_folder || false, parent_id || null]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
@@ -994,14 +1015,16 @@ app.post('/api/newsletters', async (req: express.Request, res: express.Response)
 });
 
 // ─── Knowledge Base Routes ────────────────────────────────────────────────────
-app.get('/api/knowledge/articles', async (req: express.Request, res: express.Response) => {
+app.get('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
+    const { tenant_id } = req.user!;
     const result = await pool.query(`
       SELECT a.*, u.first_name as author_first_name, u.last_name as author_last_name
       FROM kb_articles a
       LEFT JOIN users u ON a.user_id = u.id
+      WHERE a.tenant_id = $1
       ORDER BY a.created_at DESC
-    `);
+    `, [tenant_id]);
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     console.error('Error fetching kb articles:', error);
@@ -1009,13 +1032,14 @@ app.get('/api/knowledge/articles', async (req: express.Request, res: express.Res
   }
 });
 
-app.post('/api/knowledge/articles', async (req: express.Request, res: express.Response) => {
-  const { tenant_id, title, content, category, is_published, is_internal, user_id } = req.body;
+app.post('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, content, category, is_published, is_internal } = req.body;
+  const { tenant_id, id: userId } = req.user!;
   try {
     const result = await pool.query(
       `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal, user_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, user_id]
+      [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, userId]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
@@ -1789,6 +1813,59 @@ app.get('/api/portal/calendar/events', authenticateToken, async (req: Authentica
 
 // --- TICKET ASSIGNMENT / POOL MANAGEMENT ---
 
+// ─── External Webhooks ────────────────────────────────────────────────────────
+app.post('/api/webhooks/tickets', async (req: express.Request, res: express.Response) => {
+    const apiKey = req.headers['x-api-key'] || req.query.api_key;
+    const { sender_email, subject, content, priority, type } = req.body;
+
+    if (!apiKey) return res.status(401).json({ success: false, error: 'API Key required' });
+    if (!sender_email || !subject || !content) return res.status(400).json({ success: false, error: 'Missing required fields' });
+
+    try {
+        // Validate API Key
+        const keyResult = await pool.query('SELECT tenant_id FROM api_keys WHERE api_key = $1', [apiKey]);
+        if (keyResult.rows.length === 0) return res.status(403).json({ success: false, error: 'Invalid API Key' });
+        
+        const { tenant_id } = keyResult.rows[0];
+
+        // Find or create customer
+        let userResult = await pool.query('SELECT id, company_id FROM users WHERE email = $1 AND tenant_id = $2', [sender_email, tenant_id]);
+        let customerId: string | null = null;
+        let companyId: string | null = null;
+
+        if (userResult.rows.length > 0) {
+            customerId = userResult.rows[0].id;
+            companyId = userResult.rows[0].company_id;
+        } else {
+            // Auto-create lead or ghost user? 
+            // For now, we create a ticket with no customer_id and mark the sender in description
+        }
+
+        const ticketResult = await pool.query(
+            `INSERT INTO tickets (tenant_id, title, description, status, priority, type, customer_id, company_id)
+             VALUES ($1, $2, $3, 'new', $4, $5, $6, $7) RETURNING *`,
+            [tenant_id, subject, `[External Webhook] From: ${sender_email}\n\n${content}`, priority || 'medium', type || 'support', customerId, companyId]
+        );
+
+        // Notify team
+        await createNotification({
+            tenant_id,
+            target_role: 'admin',
+            type: 'ticket',
+            entity_id: ticketResult.rows[0].id,
+            title: 'Neues Externes Ticket',
+            message: `Ein Ticket von ${sender_email} wurde via Webhook empfangen.`,
+            priority: priority === 'critical' ? 'critical' : 'normal',
+            link: `/tickets/${ticketResult.rows[0].id}`
+        });
+
+        res.status(201).json({ success: true, ticket_id: ticketResult.rows[0].id });
+    } catch (error) {
+        console.error('Webhook Error:', error);
+        res.status(500).json({ success: false, error: 'Internal Server Error' });
+    }
+});
+
 app.patch('/api/tickets/:id/take', authenticateToken, authorizeRole('admin', 'management', 'employee'), async (req: AuthenticatedRequest, res: express.Response) => {
     const { id } = req.params;
     const { id: userId } = req.user!;
@@ -1986,6 +2063,117 @@ app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRe
     });
   } catch (error) {
     console.error('Dashboard Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const { months = '3' } = req.query;
+    const interval = `${months} months`;
+
+    const performance = await pool.query(`
+      SELECT 
+        u.id, u.first_name, u.last_name,
+        (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.id AND t.status = 'resolved' AND t.updated_at >= NOW() - INTERVAL '${interval}') as resolved_tickets,
+        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - INTERVAL '${interval}') as completed_projects
+      FROM users u
+      WHERE u.tenant_id = $1 AND u.is_active = true AND u.role != 'customer'
+      ORDER BY resolved_tickets DESC, completed_projects DESC
+    `, [tenant_id]);
+
+    res.json({ success: true, data: performance.rows });
+  } catch (error) {
+    console.error('Performance Report Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+// ─── File Management Routes ───────────────────────────────────────────────────
+
+app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { entity_type, entity_id, parent_id } = req.query;
+  const { tenant_id } = req.user!;
+
+  try {
+    let query = 'SELECT * FROM files WHERE tenant_id = $1';
+    const params: any[] = [tenant_id];
+
+    if (entity_type) {
+      params.push(entity_type);
+      query += ` AND entity_type = $${params.length}`;
+    }
+    if (entity_id) {
+      params.push(entity_id);
+      query += ` AND entity_id = $${params.length}`;
+    }
+    
+    if (parent_id === 'null' || !parent_id) {
+      query += ' AND parent_id IS NULL';
+    } else {
+      params.push(parent_id);
+      query += ` AND parent_id = $${params.length}`;
+    }
+
+    query += ' ORDER BY is_folder DESC, file_name ASC';
+
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Fetch files error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { name, entity_type, entity_id, parent_id } = req.body;
+  const { tenant_id, id: userId } = req.user!;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO files (tenant_id, entity_type, entity_id, file_name, file_type, is_folder, parent_id, uploaded_by)
+       VALUES ($1, $2, $3, $4, 'folder', true, $5, $6) RETURNING *`,
+      [tenant_id, entity_type, entity_id, name, parent_id || null, userId]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Create folder error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/files/upload', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { file_name, file_type, file_size, file_content, entity_type, entity_id, parent_id } = req.body;
+  const { tenant_id, id: userId } = req.user!;
+
+  try {
+    // In a real app, we'd upload to S3 here. For now, we store metadata and simulate success.
+    // If file_content is provided, we could store it in a blob or local storage, 
+    // but for this MVP we'll just log the "upload".
+    
+    const result = await pool.query(
+      `INSERT INTO files (tenant_id, entity_type, entity_id, file_name, file_type, file_size, file_path, is_folder, parent_id, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9) RETURNING *`,
+      [tenant_id, entity_type, entity_id, file_name, file_type, file_size, 'SIMULATED_STORAGE_PATH', parent_id || null, userId]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Upload file error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/api/files/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { tenant_id } = req.user!;
+
+  try {
+    const result = await pool.query('DELETE FROM files WHERE id = $1 AND tenant_id = $2 RETURNING *', [id, tenant_id]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
+    res.json({ success: true, message: 'File deleted' });
+  } catch (error) {
+    console.error('Delete file error:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });

@@ -8,6 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Project, Ticket as TicketEntity } from '../types/entities';
 import { isInternal } from '../utils/auth';
+import { DocumentExplorer } from '../components/DocumentExplorer';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
   planning:    { label: 'Planung',      color: '#8b5cf6', bg: '#8b5cf615', icon: Clock },
@@ -581,10 +582,7 @@ export const ProjectDetailView = () => {
       )}
 
       {activeTab === 'documents' && (
-        <div className="card" style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-          <FileText size={48} style={{ opacity: 0.2, margin: '0 auto 16px' }} />
-          <p style={{ fontWeight: 500 }}>Dokumentenverwaltung kommt in Kürze.</p>
-        </div>
+        <DocumentExplorer entityType="project" entityId={id!} />
       )}
 
       {showEdit && (

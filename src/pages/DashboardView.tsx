@@ -27,9 +27,10 @@ export const DashboardView = () => {
   const navigate = useNavigate();
   const [metrics, setMetrics] = useState({
     openTickets: 0, criticalTickets: 0, activeProjects: 0, 
-    newLeads: 4, pipelineValue: 12500,
-    paidInvoices: 8, overdueInvoices: 2
+    newLeads: 0, monthRevenue: 0,
+    overdueInvoices: 0
   });
+  const [revenueData, setRevenueData] = useState<any[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -42,10 +43,10 @@ export const DashboardView = () => {
         ]);
 
         if (metricsRes.success) {
-          setMetrics(prev => ({
-            ...prev,
-            ...metricsRes.metrics
-          }));
+          setMetrics(metricsRes.metrics);
+          if (metricsRes.charts?.revenueByMonth) {
+            setRevenueData(metricsRes.charts.revenueByMonth);
+          }
         }
 
         if (timelineRes.success) {
@@ -60,14 +61,6 @@ export const DashboardView = () => {
     fetchDashboard();
   }, []);
 
-  const revenueData = [
-    { name: 'Jan', revenue: 4200, costs: 2100 },
-    { name: 'Feb', revenue: 5100, costs: 2400 },
-    { name: 'Mar', revenue: 3800, costs: 2800 },
-    { name: 'Apr', revenue: 6200, costs: 3100 },
-    { name: 'Mai', revenue: 5900, costs: 3400 },
-    { name: 'Jun', revenue: 7500, costs: 3800 },
-  ];
 
   return (
     <div className="dashboard-page" style={{ maxWidth: 1400, margin: '0 auto' }}>
@@ -95,19 +88,27 @@ export const DashboardView = () => {
       {/* KPI Grid */}
       <div className="grid-responsive grid-cols-1-5" style={{ marginBottom: 24 }}>
         <KpiCard
-          title="Offene Supportfälle"
-          value={metrics.openTickets}
-          badge={metrics.criticalTickets > 0 ? `${metrics.criticalTickets} Prio` : undefined}
+          title="Umsatz laufender Monat"
+          value={`${metrics.monthRevenue?.toLocaleString('de-CH')} CHF`}
+          sub="Zahlungen & Offerten"
+          color="#10b981"
+          icon={TrendingUp}
+          onClick={() => navigate('/quotes')}
+        />
+        <KpiCard
+          title="Überfällige Posten"
+          value={metrics.overdueInvoices}
+          badge={metrics.overdueInvoices > 0 ? 'Aktion nötig' : undefined}
           badgeCls="danger"
-          color="#ffab00"
-          icon={Ticket}
-          onClick={() => navigate('/tickets')}
+          color="#ef4444"
+          icon={AlertTriangle}
+          onClick={() => navigate('/quotes')}
         />
         <KpiCard
           title="Neue Leads"
           value={metrics.newLeads}
           sub="Letzte 7 Tage"
-          color="#6554c0"
+          color="#8b5cf6"
           icon={Tag}
           onClick={() => navigate('/leads')}
         />
@@ -120,23 +121,13 @@ export const DashboardView = () => {
           onClick={() => navigate('/projects')}
         />
         <KpiCard
-          title={`Umsatz (${new Date().toLocaleDateString('de-CH', { month: 'short' })})`}
-          value={`CHF ${(metrics as any).monthRevenue?.toLocaleString('de-CH') || '0'}`}
-          badge={ (metrics as any).monthRevenue > 0 ? "+12%" : undefined }
-          badgeCls="success"
-          color="#36b37e"
-          icon={TrendingUp}
-          onClick={() => navigate('/accounting')}
-        />
-        <KpiCard
-          title="Überfällig"
-          value={metrics.overdueInvoices}
-          sub="Zahlungserinnerungen"
-          badge={metrics.overdueInvoices > 0 ? "Aktion nötig" : undefined}
+          title="Offene Supportfälle"
+          value={metrics.openTickets}
+          badge={metrics.criticalTickets > 0 ? `${metrics.criticalTickets} Prio` : undefined}
           badgeCls="danger"
-          color="#ff5630"
-          icon={AlertTriangle}
-          onClick={() => navigate('/quotes')}
+          color="#ffab00"
+          icon={Ticket}
+          onClick={() => navigate('/tickets')}
         />
       </div>
 
@@ -156,32 +147,35 @@ export const DashboardView = () => {
               <h3 style={{ fontSize: 15, fontWeight: 700 }}>Performance & Cashflow</h3>
               <div style={{ display: 'flex', gap: 16, fontSize: 12 }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#36b37e' }}></div> Umsatz
-                </span>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: 'var(--color-text-muted)' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#ff5630' }}></div> Kosten
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'var(--color-primary)' }}></div> Umsatz
                 </span>
               </div>
             </div>
             <div style={{ height: 320, opacity: loading ? 0.5 : 1, transition: 'opacity 0.3s ease' }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={revenueData}>
-                  <defs>
-                    <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#36b37e" stopOpacity={0.15}/>
-                      <stop offset="95%" stopColor="#36b37e" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 11}} dy={10} />
-                  <YAxis axisLine={false} tickLine={false} tick={{fill: 'var(--color-text-muted)', fontSize: 11}} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'var(--color-surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-lg)' }}
-                  />
-                  <Area type="monotone" dataKey="revenue" stroke="#36b37e" strokeWidth={3} fillOpacity={1} fill="url(#colorIncome)" />
-                  <Area type="monotone" dataKey="costs" stroke="#ff5630" strokeWidth={2} strokeDasharray="5 5" fill="transparent" />
-                </AreaChart>
-              </ResponsiveContainer>
+              {revenueData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={revenueData}>
+                    <defs>
+                      <linearGradient id="colorRev" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
+                    <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--color-text-muted)' }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: 'var(--color-text-muted)' }} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)' }}
+                      itemStyle={{ fontSize: 12, fontWeight: 600 }}
+                    />
+                    <Area type="monotone" dataKey="revenue" stroke="var(--color-primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorRev)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                   Keine Umsatzdaten für den aktuellen Zeitraum vorhanden.
+                </div>
+              )}
             </div>
           </div>
 
