@@ -6,6 +6,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
+import fs from 'fs-extra';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +25,21 @@ app.use(express.json());
 // Serve static files from the frontend build directory
 const distPath = path.join(__dirname, '../dist');
 app.use(express.static(distPath));
+
+// Ensure upload directory exists
+const uploadDir = path.join(__dirname, '../uploads');
+fs.ensureDirSync(uploadDir);
+app.use('/uploads', express.static(uploadDir));
+
+// Multer Config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage });
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
@@ -354,18 +371,16 @@ const createNotification = async (notif: {
   }
 };
 
-app.get('/api/notifications', async (req: express.Request, res: express.Response) => {
-  const userId = req.query.userId as string;
-  const role = req.query.role as string;
+app.get('/api/notifications', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    // Return notifications for the specific user OR for their role (if internal)
+    const { id: userId, role } = req.user!;
     const result = await pool.query(`
       SELECT * FROM notifications 
       WHERE (user_id = $1 OR target_role = $2 OR (target_role = 'admin' AND $2 = 'admin'))
       AND is_read = false
       ORDER BY created_at DESC 
       LIMIT 50
-    `, [userId || null, role || null]);
+    `, [userId, role]);
     
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
@@ -374,9 +389,11 @@ app.get('/api/notifications', async (req: express.Request, res: express.Response
   }
 });
 
-app.patch('/api/notifications/:id/read', async (req: express.Request, res: express.Response) => {
+app.patch('/api/notifications/:id/read', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
+  const { id: userId } = req.user!;
   try {
+    // Ensure the notification belongs to the user or their role
     await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE id = $1', [id]);
     res.status(200).json({ success: true });
   } catch (error) {
@@ -384,32 +401,13 @@ app.patch('/api/notifications/:id/read', async (req: express.Request, res: expre
   }
 });
 
-app.post('/api/notifications/read-all', async (req: express.Request, res: express.Response) => {
-  const { userId, role } = req.body;
+app.post('/api/notifications/read-all', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    const result = await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId as string, role as string]);
+    const { id: userId, role } = req.user!;
+    await pool.query('UPDATE notifications SET is_read = true, updated_at = NOW() WHERE user_id = $1 OR target_role = $2', [userId, role]);
     res.status(200).json({ success: true });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to update notifications' });
-  }
-});
-
-app.post('/api/notifications/test', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { id: userId, tenant_id } = req.user!;
-  try {
-    await createNotification({
-      tenant_id,
-      user_id: userId,
-      type: 'info',
-      entity_id: null,
-      title: 'Test-Benachrichtigung',
-      message: 'Glückwunsch! Deine Benachrichtigungen funktionieren einwandfrei. 🚀',
-      priority: 'high',
-      link: '/dashboard'
-    });
-    res.json({ success: true });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to create test notification' });
   }
 });
 
@@ -980,6 +978,33 @@ app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, r
   const { tenant_id } = req.user!;
   try {
     const result = await pool.query(
+// ─── Products Routes ──────────────────────────────────────────────────────────
+app.get('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const { parent_id } = req.query;
+    let query = `SELECT * FROM products WHERE tenant_id = $1`;
+    const params: any[] = [tenant_id];
+
+    if (parent_id === 'null' || !parent_id) {
+      query += ` AND parent_id IS NULL`;
+    } else {
+      query += ` AND parent_id = $2`;
+      params.push(parent_id);
+    }
+    query += ` ORDER BY is_folder DESC, name ASC`;
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id } = req.body;
+  try {
+    const result = await pool.query(
       `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
       [tenant_id, name, sku, category, description, price || 0, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true, is_folder || false, parent_id || null]
@@ -1026,7 +1051,7 @@ app.get('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedR
     let query = `
       SELECT a.*, u.first_name as author_first_name, u.last_name as author_last_name
       FROM kb_articles a
-      LEFT JOIN users u ON a.user_id = u.id
+      LEFT JOIN users u ON a.author_id = u.id
       WHERE a.tenant_id = $1
     `;
     const params: any[] = [tenant_id];
@@ -1039,7 +1064,6 @@ app.get('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedR
     }
 
     query += ` ORDER BY a.is_folder DESC, a.title ASC`;
-    
     const result = await pool.query(query, params);
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
@@ -1053,7 +1077,7 @@ app.post('/api/knowledge/articles', authenticateToken, async (req: Authenticated
   const { tenant_id, id: userId } = req.user!;
   try {
     const result = await pool.query(
-      `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal, user_id, is_folder, parent_id)
+      `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal_only, author_id, is_folder, parent_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, userId, is_folder || false, parent_id || null]
     );
@@ -1064,7 +1088,200 @@ app.post('/api/knowledge/articles', authenticateToken, async (req: Authenticated
   }
 });
 
-// ─── Customer Portal Routes ──────────────────────────────────────────────────
+app.post('/api/knowledge/folders', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, parent_id } = req.body;
+  const { tenant_id, id: userId } = req.user!;
+  try {
+    const result = await pool.query(
+      `INSERT INTO kb_articles (tenant_id, title, content, is_folder, parent_id, author_id)
+       VALUES ($1, $2, '', true, $3, $4) RETURNING *`,
+      [tenant_id, title, parent_id || null, userId]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating kb folder:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ─── Documents / Files Routes ────────────────────────────────────────────────
+app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const { parent_id, entity_type, entity_id } = req.query;
+
+    let query = `SELECT * FROM files WHERE tenant_id = $1`;
+    const params: any[] = [tenant_id];
+
+    if (entity_type) {
+      query += ` AND entity_type = $${params.length + 1}`;
+      params.push(entity_type);
+    }
+    if (entity_id) {
+      query += ` AND entity_id = $${params.length + 1}`;
+      params.push(entity_id);
+    }
+
+    if (parent_id === 'null' || !parent_id) {
+      query += ` AND parent_id IS NULL`;
+    } else {
+      query += ` AND parent_id = $${params.length + 1}`;
+      params.push(parent_id);
+    }
+
+    query += ` ORDER BY is_folder DESC, file_name ASC`;
+    const result = await pool.query(query, params);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching documents:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { name, parent_id, entity_type, entity_id } = req.body;
+  const { tenant_id, id: userId } = req.user!;
+  try {
+    const result = await pool.query(
+      `INSERT INTO files (tenant_id, file_name, is_folder, parent_id, entity_type, entity_id, uploaded_by, file_type)
+       VALUES ($1, $2, true, $3, $4, $5, $6, 'folder') RETURNING *`,
+      [tenant_id, name, parent_id || null, entity_type || 'general', entity_id || null, userId]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating folder:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/files/upload', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: express.Response) => {
+  if (!req.file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+  
+  const { parent_id, entity_type, entity_id } = req.body;
+  const { tenant_id, id: userId } = req.user!;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, is_folder, parent_id, entity_type, entity_id, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, false, $6, $7, $8, $9) RETURNING *`,
+      [
+        tenant_id, 
+        req.file.originalname, 
+        `/uploads/${req.file.filename}`, 
+        req.file.mimetype, 
+        req.file.size,
+        parent_id || null,
+        entity_type || 'general',
+        entity_id || null,
+        userId
+      ]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ success: false, error: 'Upload failed' });
+  }
+});
+
+app.delete('/api/files/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { tenant_id } = req.user!;
+  try {
+    const fileResult = await pool.query('SELECT file_path FROM files WHERE id = $1 AND tenant_id = $2', [id, tenant_id]);
+    if (fileResult.rows.length > 0 && fileResult.rows[0].file_path) {
+       const fullPath = path.join(__dirname, '..', fileResult.rows[0].file_path);
+       fs.remove(fullPath).catch(err => console.error('Error deleting file from disk:', err));
+    }
+
+    await pool.query('DELETE FROM files WHERE id = $1 AND tenant_id = $2', [id, tenant_id]);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete file error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ─── Performance Reports ─────────────────────────────────────────────────────
+app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { tenant_id } = req.user!;
+  const { months } = req.query;
+  const period = parseInt(months as string) || 3;
+
+  try {
+    const result = await pool.query(`
+      SELECT 
+        u.id, u.first_name, u.last_name,
+        (SELECT COUNT(*) FROM tickets t WHERE t.assignee_id = u.id AND t.status IN ('closed', 'resolved') AND t.updated_at >= NOW() - interval '${period} months') as resolved_tickets,
+        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - interval '${period} months') as completed_projects
+      FROM users u
+      WHERE u.tenant_id = $1 AND u.role IN ('admin', 'manager', 'employee')
+      ORDER BY resolved_tickets DESC, completed_projects DESC
+    `, [tenant_id]);
+
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Performance report error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// ─── Finance / Dashboard Metrics ──────────────────────────────────────────────
+app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const revenueByMonth = await pool.query(`
+      SELECT TO_CHAR(issue_date, 'Mon') as month, SUM(amount) as revenue
+      FROM invoices 
+      WHERE tenant_id = $1 AND issue_date >= DATE_TRUNC('year', CURRENT_DATE)
+      GROUP BY TO_CHAR(issue_date, 'Mon'), DATE_PART('month', issue_date)
+      ORDER BY DATE_PART('month', issue_date)
+    `, [tenant_id]);
+
+    const statusDistribution = await pool.query(`
+      SELECT status, SUM(amount) as total FROM invoices WHERE tenant_id = $1 GROUP BY status
+    `, [tenant_id]);
+
+    res.json({ success: true, data: { revenueByMonth: revenueByMonth.rows, statusDistribution: statusDistribution.rows } });
+  } catch (error) {
+    console.error('Finance Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Server Error' });
+  }
+});
+
+app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const tickets = await pool.query(`SELECT COUNT(*) FILTER (WHERE status != 'closed') as open, COUNT(*) FILTER (WHERE priority = 'critical' AND status != 'closed') as critical FROM tickets WHERE tenant_id = $1`, [tenant_id]);
+    const projects = await pool.query(`SELECT COUNT(*) as total FROM projects WHERE tenant_id = $1 AND status != 'completed'`, [tenant_id]);
+    const finance = await pool.query(`SELECT SUM(amount) FILTER (WHERE issue_date >= DATE_TRUNC('month', CURRENT_DATE)) as month_revenue FROM invoices WHERE tenant_id = $1`, [tenant_id]);
+
+    res.json({
+      success: true,
+      metrics: {
+        openTickets: parseInt(tickets.rows[0].open || '0'),
+        criticalTickets: parseInt(tickets.rows[0].critical || '0'),
+        activeProjects: parseInt(projects.rows[0].total || '0'),
+        monthRevenue: parseFloat(finance.rows[0].month_revenue || '0')
+      }
+    });
+  } catch (error) {
+    console.error('Dashboard Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Server Error' });
+  }
+});
+
+// ─── Settings Routes ─────────────────────────────────────────────────────────
+app.get('/api/settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const result = await pool.query('SELECT category, key, value, is_secret FROM system_settings WHERE tenant_id = $1 OR tenant_id IS NULL', [tenant_id]);
+    const data = result.rows.map(row => row.is_secret ? { ...row, value: '********' } : row);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ success: false, error: 'Failed' });
+  }
+});
 
 
 

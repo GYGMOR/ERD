@@ -85,24 +85,22 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
 
     setUploading(true);
     try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (currentFolderId) formData.append('parent_id', currentFolderId);
+      formData.append('entity_type', entityType);
+      formData.append('entity_id', entityId);
+
       const res = await fetch('/api/files/upload', {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${getToken()}`
         },
-        body: JSON.stringify({
-          file_name: file.name,
-          file_type: file.name.split('.').pop()?.toLowerCase() || 'bin',
-          file_size: file.size,
-          entity_type: entityType,
-          entity_id: entityId,
-          parent_id: currentFolderId
-        })
+        body: formData
       });
       const data = await res.json();
       if (data.success) {
-        setItems(prev => [...prev, data.data]);
+        setItems(prev => [data.data, ...prev].sort((a, b) => b.is_folder ? 1 : -1));
       }
     } catch (err) {
       console.error(err);

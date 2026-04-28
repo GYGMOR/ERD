@@ -104,11 +104,12 @@ export const dataService = {
     }
   },
 
-  async markAllNotificationsAsRead() {
+  async markAllNotificationsAsRead(userId: string, role: string) {
     try {
       const data = await fetch(`${API_BASE}/notifications/read-all`, {
         method: 'POST',
-        headers: getHeaders()
+        headers: getHeaders(),
+        body: JSON.stringify({ userId, role })
       }).then(handleResponse);
       return data;
     } catch (error: any) {

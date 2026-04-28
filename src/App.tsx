@@ -121,7 +121,6 @@ const NAV_GROUPS: NavGroup[] = [
       { to: '/projects', icon: FolderOpen, label: 'Projekte', roles: ['admin', 'manager', 'employee'] },
       { to: '/performance', icon: Activity, label: 'Performance', roles: ['admin', 'manager'] },
       { to: '/documents', icon: FolderOpen, label: 'Dokumente', roles: ['admin', 'manager', 'employee'] },
-      { to: '/documents', icon: FolderOpen, label: 'Dokumente', roles: ['admin', 'manager', 'employee'] },
       { to: '/knowledge', icon: BookOpen, label: 'Knowledge Base' },
     ],
   },
@@ -232,6 +231,27 @@ const VersionTag = () => (
 );
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
+// ─── Version Tag ──────────────────────────────────────────────────────────────
+const VersionTag = () => (
+  <div style={{
+    position: 'fixed',
+    bottom: '12px',
+    right: '12px',
+    padding: '4px 8px',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    backdropFilter: 'blur(4px)',
+    color: 'rgba(255,255,255,0.8)',
+    borderRadius: '4px',
+    fontSize: '10px',
+    fontWeight: 600,
+    zIndex: 9999,
+    pointerEvents: 'none',
+    letterSpacing: '0.5px'
+  }}>
+    v1.5.1
+  </div>
+);
+
 const AppChild = () => {
   const { instance, inProgress } = useMsal();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);

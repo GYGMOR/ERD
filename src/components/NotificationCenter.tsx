@@ -62,7 +62,7 @@ export const NotificationCenter = () => {
   const markAllRead = async () => {
     if (!user) return;
     try {
-      const res = await dataService.markAllNotificationsAsRead();
+      const res = await dataService.markAllNotificationsAsRead(user.id, user.role);
       if (res.success) {
         setNotifications([]);
       }
@@ -147,24 +147,6 @@ export const NotificationCenter = () => {
           }}>
             <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Meldungen</h3>
             <div style={{ display: 'flex', gap: 12 }}>
-              <button 
-                onClick={async () => {
-                  try {
-                    await fetch('/api/notifications/test', { 
-                      method: 'POST', 
-                      headers: { 
-                        'Authorization': `Bearer ${localStorage.getItem('token')}` 
-                      } 
-                    });
-                    fetchNotifications();
-                  } catch (err) {
-                    console.error('Test notification failed', err);
-                  }
-                }}
-                style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: 11, cursor: 'pointer' }}
-              >
-                Test
-              </button>
               {notifications.length > 0 && (
                 <button 
                   onClick={markAllRead}
