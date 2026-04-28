@@ -1006,26 +1006,14 @@ app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, r
   const { tenant_id } = req.user!;
   try {
     const result = await pool.query(
-// ─── Products Routes ──────────────────────────────────────────────────────────
-app.get('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id } = req.user!;
-    const { parent_id } = req.query;
-    let query = `SELECT * FROM products WHERE tenant_id = $1`;
-    const params: any[] = [tenant_id];
-
-    if (parent_id === 'null' || !parent_id) {
-      query += ` AND parent_id IS NULL`;
-    } else {
-      query += ` AND parent_id = $2`;
-      params.push(parent_id);
-    }
-    query += ` ORDER BY is_folder DESC, name ASC`;
-    const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
+      `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [tenant_id, name, sku, category, description, price || 0, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true, is_folder || false, parent_id || null]
+    );
+    res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
-    console.error('Error fetching products:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
+    console.error('Error creating product:', error);
+    res.status(500).json({ success: false, error: 'Server error creating product' });
   }
 });
 
