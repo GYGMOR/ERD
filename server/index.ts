@@ -85,6 +85,53 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     console.log('Connected to Database successfully.');
     // Ensure password reset columns exist
     pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT, ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP').catch(err => console.error('Error adding reset columns:', err));
+    
+    // Project logs table
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS project_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        user_id UUID NOT NULL REFERENCES users(id),
+        message TEXT NOT NULL,
+        type VARCHAR(50) DEFAULT 'note',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(err => console.error('Error creating project_logs table:', err));
+
+    // Ensure projects has assigned_to column
+    pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id)').catch(err => console.error('Error adding assigned_to to projects:', err));
+
+    // Signatures
+    pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to tickets:', err));
+    pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to contracts:', err));
+
+    // Files / Documents table
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS files (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL,
+        entity_type VARCHAR(50) NOT NULL, -- 'ticket', 'project', 'contract', 'invoice'
+        entity_id UUID NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_path TEXT NOT NULL,
+        file_type VARCHAR(100),
+        file_size INTEGER,
+        uploaded_by UUID REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(err => console.error('Error creating files table:', err));
+
+    // Webhook API Keys table
+    pool.query(`
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL,
+        key_name VARCHAR(255) NOT NULL,
+        api_key TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_used_at TIMESTAMP
+      )
+    `).catch(err => console.error('Error creating api_keys table:', err));
   }
 });
 
@@ -622,6 +669,17 @@ app.post('/api/tickets', async (req: express.Request, res: express.Response) => 
   }
 });
 
+app.post('/api/tickets/:id/signature', authenticateToken, async (req: express.Request, res: express.Response) => {
+  const { id } = req.params;
+  const { signature_data } = req.body;
+  try {
+    await pool.query('UPDATE tickets SET signature_data = $1, status = \'closed\', updated_at = NOW() WHERE id = $2', [signature_data, id]);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to save signature' });
+  }
+});
+
 // --- Invoice / Quotes Routes ---
 app.get('/api/invoices', async (req: express.Request, res: express.Response) => {
   try {
@@ -673,9 +731,11 @@ app.get('/api/projects', async (req: express.Request, res: express.Response) => 
   try {
     const result = await pool.query(`
       SELECT p.*, c.name as company_name,
+        u.first_name as assignee_first_name, u.last_name as assignee_last_name,
         (SELECT COUNT(*) FROM tickets t WHERE t.company_id = p.company_id)::int as ticket_count
       FROM projects p
       LEFT JOIN companies c ON p.company_id = c.id
+      LEFT JOIN users u ON p.assigned_to = u.id
       ORDER BY p.created_at DESC
     `);
     res.status(200).json({ success: true, data: result.rows });
@@ -692,9 +752,9 @@ app.post('/api/projects', async (req: express.Request, res: express.Response) =>
   }
   try {
     const result = await pool.query(
-      `INSERT INTO projects (tenant_id, company_id, name, description, status, priority, start_date, end_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-      [tenant_id, company_id || null, name, description, status || 'planning', priority || 'medium', start_date || null, end_date || null]
+      `INSERT INTO projects (tenant_id, company_id, name, description, status, priority, start_date, end_date, assigned_to)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [tenant_id, company_id || null, name, description, status || 'planning', priority || 'medium', start_date || null, end_date || null, req.body.assigned_to || null]
     );
 
     // Notification for new project
@@ -726,15 +786,62 @@ app.patch('/api/projects/:id', async (req: express.Request, res: express.Respons
         name = COALESCE($3, name),
         description = COALESCE($4, description),
         end_date = COALESCE($5, end_date),
+        assigned_to = COALESCE($6, assigned_to),
         updated_at = NOW()
-       WHERE id = $6 RETURNING *`,
-      [status, priority, name, description, end_date, id]
+       WHERE id = $7 RETURNING *`,
+      [status, priority, name, description, end_date, req.body.assigned_to, id]
     );
     if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Project not found' });
     res.status(200).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error updating project:', error);
     res.status(500).json({ success: false, error: 'Server error updating project' });
+  }
+});
+
+// Project Logs (Journal)
+app.get('/api/projects/:id/logs', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT l.*, u.first_name, u.last_name
+      FROM project_logs l
+      JOIN users u ON l.user_id = u.id
+      WHERE l.project_id = $1
+      ORDER BY l.created_at DESC
+    `, [id]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to fetch project logs' });
+  }
+});
+
+app.post('/api/projects/:id/logs', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { message, type } = req.body;
+  const { id: userId } = req.user!;
+  
+  if (!message) return res.status(400).json({ success: false, error: 'Message is required' });
+  
+  try {
+    const result = await pool.query(
+      `INSERT INTO project_logs (project_id, user_id, message, type)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [id, userId, message, type || 'note']
+    );
+    
+    // Fetch with user name
+    const joined = await pool.query(`
+      SELECT l.*, u.first_name, u.last_name
+      FROM project_logs l
+      JOIN users u ON l.user_id = u.id
+      WHERE l.id = $1
+    `, [result.rows[0].id]);
+    
+    res.status(201).json({ success: true, data: joined.rows[0] });
+  } catch (error) {
+    console.error('Error creating project log:', error);
+    res.status(500).json({ success: false, error: 'Failed to create project log' });
   }
 });
 
@@ -1785,6 +1892,115 @@ app.post('/api/tickets/:id/messages', authenticateToken, authorizeRole('admin', 
     } catch (error) {
       res.status(500).json({ success: false, error: 'Server error' });
     }
+});
+
+// ─── Finance / Dashboard Routes ───────────────────────────────────────────────
+
+app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    
+    // Revenue by Month (Current Year)
+    const revenueByMonth = await pool.query(`
+      SELECT 
+        TO_CHAR(issue_date, 'Mon') as month,
+        SUM(amount) as revenue,
+        COUNT(*) as count
+      FROM invoices 
+      WHERE tenant_id = $1 AND issue_date >= DATE_TRUNC('year', CURRENT_DATE)
+      GROUP BY TO_CHAR(issue_date, 'Mon'), DATE_PART('month', issue_date)
+      ORDER BY DATE_PART('month', issue_date)
+    `, [tenant_id]);
+
+    // Pending vs Paid
+    const statusDistribution = await pool.query(`
+      SELECT status, SUM(amount) as total
+      FROM invoices
+      WHERE tenant_id = $1
+      GROUP BY status
+    `, [tenant_id]);
+
+    // Recent Exports (for GoBD Historie)
+    const recentExports = [
+        { id: 1, type: 'GoBD/CSV', date: new Date().toISOString(), user: 'Admin', status: 'success' },
+        { id: 2, type: 'VAT/PDF', date: new Date(Date.now() - 86400000 * 7).toISOString(), user: 'Admin', status: 'success' }
+    ];
+
+    res.json({
+      success: true,
+      data: {
+        revenueByMonth: revenueByMonth.rows,
+        statusDistribution: statusDistribution.rows,
+        recentExports
+      }
+    });
+  } catch (error) {
+    console.error('Finance Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
+// ─── Webhooks (External Integration) ──────────────────────────────────────────
+
+app.post('/api/webhooks/tickets', async (req: express.Request, res: express.Response) => {
+  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const { sender_email, subject, content, priority, metadata } = req.body;
+
+  if (!apiKey) return res.status(401).json({ success: false, error: 'API Key required' });
+  if (!sender_email || !subject || !content) {
+    return res.status(400).json({ success: false, error: 'Missing required fields: sender_email, subject, content' });
+  }
+
+  try {
+    // 1. Verify API Key
+    const keyResult = await pool.query('SELECT tenant_id FROM api_keys WHERE api_key = $1', [apiKey]);
+    if (keyResult.rows.length === 0) return res.status(403).json({ success: false, error: 'Invalid API Key' });
+    
+    const tenant_id = keyResult.rows[0].tenant_id;
+
+    // 2. Find or create user for sender_email
+    let userResult = await pool.query('SELECT id FROM users WHERE email = $1', [sender_email]);
+    let userId;
+    
+    if (userResult.rows.length > 0) {
+      userId = userResult.rows[0].id;
+    } else {
+      // Auto-create external contact/user
+      const newUser = await pool.query(
+        `INSERT INTO users (tenant_id, email, password_hash, role, first_name, last_name, is_active)
+         VALUES ($1, $2, 'EXTERNAL_NO_LOGIN', 'customer', 'External', 'User', true) RETURNING id`,
+        [tenant_id, sender_email]
+      );
+      userId = newUser.rows[0].id;
+    }
+
+    // 3. Create Ticket
+    const ticketResult = await pool.query(
+      `INSERT INTO tickets (tenant_id, title, description, status, priority, type, customer_id, source_metadata)
+       VALUES ($1, $2, $3, 'new', $4, 'support', $5, $6) RETURNING *`,
+      [tenant_id, subject, content, priority || 'medium', userId, JSON.stringify(metadata || {})]
+    );
+
+    // 4. Update API Key usage
+    await pool.query('UPDATE api_keys SET last_used_at = NOW() WHERE api_key = $1', [apiKey]);
+
+    // 5. Notify Admins
+    await createNotification({
+      tenant_id,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: ticketResult.rows[0].id,
+      title: 'Neues Webhook-Ticket',
+      message: `Ein Ticket von "${sender_email}" wurde via API empfangen.`,
+      priority: priority === 'critical' ? 'critical' : 'normal',
+      link: `/tickets/${ticketResult.rows[0].id}`
+    });
+
+    res.status(201).json({ success: true, ticket_id: ticketResult.rows[0].id });
+  } catch (error) {
+    console.error('Webhook Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
 });
 
 // For any other request, serve the index.html (Client Side Routing)

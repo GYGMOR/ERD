@@ -23,6 +23,8 @@ export const AccountingView = () => {
     currency: 'CHF',
     date: new Date().toISOString().split('T')[0],
   });
+  const [metrics, setMetrics] = useState<any>(null);
+  const [loadingMetrics, setLoadingMetrics] = useState(true);
 
   const tenantId = getTenantId();
 
@@ -40,6 +42,10 @@ export const AccountingView = () => {
 
   useEffect(() => {
     fetchEntries();
+    fetch('/api/finance/metrics')
+      .then(r => r.json())
+      .then(d => { if (d.success) setMetrics(d.data); })
+      .finally(() => setLoadingMetrics(false));
   }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
@@ -143,46 +149,48 @@ export const AccountingView = () => {
         <div className="card" style={{ padding: 20 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>Umsatzentwicklung</h3>
           <div style={{ height: 260 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <defs>
-                  <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#36b37e" stopOpacity={0.1}/>
-                    <stop offset="95%" stopColor="#36b37e" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-                <XAxis dataKey="name" fontSize={11} stroke="var(--color-text-muted)" />
-                <YAxis fontSize={11} stroke="var(--color-text-muted)" />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
-                />
-                <Area type="monotone" dataKey="income" stroke="#36b37e" fillOpacity={1} fill="url(#colorIncome)" strokeWidth={2} name="Einnahmen" />
-                <Area type="monotone" dataKey="expense" stroke="#ff5630" fill="transparent" strokeWidth={1} strokeDasharray="4 4" name="Ausgaben" />
-              </AreaChart>
-            </ResponsiveContainer>
+            {loadingMetrics ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>Lade Daten...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={metrics?.revenueByMonth || []}>
+                  <defs>
+                    <linearGradient id="colorIncome" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#36b37e" stopOpacity={0.1}/>
+                      <stop offset="95%" stopColor="#36b37e" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
+                  <XAxis dataKey="month" fontSize={11} stroke="var(--color-text-muted)" />
+                  <YAxis fontSize={11} stroke="var(--color-text-muted)" />
+                  <Tooltip 
+                    contentStyle={{ backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)' }}
+                  />
+                  <Area type="monotone" dataKey="revenue" stroke="#36b37e" fillOpacity={1} fill="url(#colorIncome)" strokeWidth={2} name="Umsatz" />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className="card" style={{ padding: 20 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>Ausgaben nach Typ</h3>
           <div style={{ height: 260 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={[
-                { name: 'Lizenzen', value: 1200 },
-                { name: 'Hardware', value: 850 },
-                { name: 'Marketing', value: 450 },
-                { name: 'Sonstiges', value: 300 },
-              ]} layout="vertical">
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" fontSize={11} stroke="var(--color-text-muted)" width={80} />
-                <Tooltip cursor={{ fill: 'transparent' }} />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={20}>
-                  {[0,1,2,3].map((_val, index) => (
-                    <Cell key={`cell-${index}`} fill={['#0052cc', '#6554c0', '#00b8d9', '#ffab00'][index % 4]} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {loadingMetrics ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>Lade Daten...</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={metrics?.statusDistribution || []} layout="vertical">
+                  <XAxis type="number" hide />
+                  <YAxis dataKey="status" type="category" fontSize={11} stroke="var(--color-text-muted)" width={80} />
+                  <Tooltip cursor={{ fill: 'transparent' }} />
+                  <Bar dataKey="total" radius={[0, 4, 4, 0]} barSize={20}>
+                    {(metrics?.statusDistribution || []).map((_val: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={['#0052cc', '#36b37e', '#ffab00', '#ff5630'][index % 4]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
@@ -253,6 +261,44 @@ export const AccountingView = () => {
           </table>
         </div>
       )}
+
+      {/* GoBD Historie */}
+      <div className="card" style={{ marginTop: 24, padding: 24 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <FileText size={20} color="var(--color-primary)" /> GoBD Export-Historie
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 20 }}>
+          Revisionssichere Dokumentation aller durchgeführten Finanz-Exporte für die Schweizer Steuerprüfung.
+        </p>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--color-border)', textAlign: 'left' }}>
+                <th style={{ padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Export-Typ</th>
+                <th style={{ padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Datum</th>
+                <th style={{ padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Benutzer</th>
+                <th style={{ padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Status</th>
+                <th style={{ padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)', textTransform: 'uppercase', textAlign: 'right' }}>Aktion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(metrics?.recentExports || []).map((exp: any) => (
+                <tr key={exp.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                  <td style={{ padding: '14px 0', fontSize: 14, fontWeight: 600 }}>{exp.type}</td>
+                  <td style={{ padding: '14px 0', fontSize: 14 }}>{new Date(exp.date).toLocaleString('de-CH')}</td>
+                  <td style={{ padding: '14px 0', fontSize: 14 }}>{exp.user}</td>
+                  <td style={{ padding: '14px 0' }}>
+                    <span className="badge success" style={{ fontSize: 11 }}>{exp.status}</span>
+                  </td>
+                  <td style={{ padding: '14px 0', textAlign: 'right' }}>
+                    <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: 12 }}>Herunterladen</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {showModal && (
         <div className="modal-overlay">

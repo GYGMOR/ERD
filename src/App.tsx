@@ -4,7 +4,7 @@ import { useMsal } from '@azure/msal-react';
 import {
   Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft,
   Search, FolderOpen, UserCheck, ShieldCheck, Activity,
-  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard, Calendar
+  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard, Calendar, Maximize, Minimize
 } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
@@ -406,6 +406,19 @@ const AppChild = () => {
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <ThemeToggle />
+            <button 
+              onClick={() => {
+                if (!document.fullscreenElement) {
+                  document.documentElement.requestFullscreen();
+                } else {
+                  document.exitFullscreen();
+                }
+              }}
+              style={{ color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%' }}
+              title="Vollbild"
+            >
+              {document.fullscreenElement ? <Minimize size={17} /> : <Maximize size={17} />}
+            </button>
             <NotificationCenter />
             <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>

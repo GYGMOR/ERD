@@ -15,6 +15,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 };
 const PRIORITY_CLS: Record<string, string> = { low: 'success', medium: 'info', high: 'warning', critical: 'danger' };
 const PRIORITY_LABEL: Record<string, string> = { low: 'Niedrig', medium: 'Mittel', high: 'Hoch', critical: 'Kritisch' };
+const PRIORITY_WEIGHT: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 
 const KANBAN_COLUMNS = ['planning', 'active', 'on_hold', 'completed'];
 
@@ -26,14 +27,17 @@ const inputStyle: React.CSSProperties = {
 
 // ─── New Project Modal ────────────────────────────────────────────────────────
 const NewProjectModal = ({ onClose, onSave }: { onClose: () => void; onSave: () => void }) => {
-  const [form, setForm] = useState({ name: '', description: '', status: 'planning', priority: 'medium', company_id: '', start_date: '', end_date: '' });
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     fetch('/api/companies').then(r => r.json()).then(d => { if (d.success) setCompanies(d.data); });
+    fetch('/api/users').then(r => r.json()).then(d => { if (d.success) setUsers(d.data); });
   }, []);
+
+  const [form, setForm] = useState({ name: '', description: '', status: 'planning', priority: 'medium', company_id: '', start_date: '', end_date: '', assigned_to: '' });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,6 +92,13 @@ const NewProjectModal = ({ onClose, onSave }: { onClose: () => void; onSave: () 
             <select style={inputStyle} value={form.company_id} onChange={e => setForm({ ...form, company_id: e.target.value })}>
               <option value="">-- Kein Kunde --</option>
               {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Verantwortlich</label>
+            <select style={inputStyle} value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })}>
+              <option value="">-- Nicht zugewiesen --</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
             </select>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -150,6 +161,15 @@ const ProjectCard = ({ project, onStatusChange, onClick }: { project: Project; o
         {project.ticket_count > 0 && (
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>🎫 {project.ticket_count}</span>
         )}
+        {project.assignee_first_name && (
+          <div style={{ 
+            width: 24, height: 24, borderRadius: '50%', backgroundColor: 'var(--color-primary)', 
+            color: 'white', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600,
+            marginLeft: project.ticket_count > 0 ? 8 : 'auto'
+          }} title={`Verantwortlich: ${project.assignee_first_name} ${project.assignee_last_name}`}>
+            {project.assignee_first_name[0]}{project.assignee_last_name[0]}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -196,9 +216,13 @@ export const ProjectsView = () => {
   };
 
   const filtered = useMemo(() => {
-    if (!search) return projects;
-    const q = search.toLowerCase();
-    return projects.filter(p => p.name.toLowerCase().includes(q) || (p.company_name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
+    let list = projects;
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(p => p.name.toLowerCase().includes(q) || (p.company_name || '').toLowerCase().includes(q) || (p.description || '').toLowerCase().includes(q));
+    }
+    // Sort by priority weight
+    return [...list].sort((a, b) => (PRIORITY_WEIGHT[b.priority] || 0) - (PRIORITY_WEIGHT[a.priority] || 0));
   }, [projects, search]);
 
   const stats = {
@@ -299,6 +323,7 @@ export const ProjectsView = () => {
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Status</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Priorität</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Enddatum</th>
+                <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Verantwortlich</th>
                 <th style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Erstellt</th>
               </tr>
             </thead>
@@ -319,6 +344,16 @@ export const ProjectsView = () => {
                     <td style={{ padding: '14px 20px' }}><span className={'badge ' + (PRIORITY_CLS[p.priority] || 'info')} style={{ fontSize: 12 }}>{PRIORITY_LABEL[p.priority]}</span></td>
                     <td style={{ padding: '14px 20px', fontSize: 13, color: isOverdue ? 'var(--color-danger)' : 'var(--color-text-muted)', fontWeight: isOverdue ? 600 : 400 }}>
                       {p.end_date ? `${isOverdue ? '⚠ ' : ''}${new Date(p.end_date).toLocaleDateString('de-CH')}` : '–'}
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      {p.assignee_first_name ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ width: 24, height: 24, borderRadius: '50%', backgroundColor: 'var(--color-primary)', color: 'white', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600 }}>
+                            {p.assignee_first_name[0]}{p.assignee_last_name[0]}
+                          </div>
+                          <span style={{ fontSize: 13 }}>{p.assignee_first_name} {p.assignee_last_name[0]}.</span>
+                        </div>
+                      ) : <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>–</span>}
                     </td>
                     <td style={{ padding: '14px 20px', fontSize: 13, color: 'var(--color-text-muted)' }}>{new Date(p.created_at).toLocaleDateString('de-CH')}</td>
                   </tr>

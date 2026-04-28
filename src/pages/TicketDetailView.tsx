@@ -4,6 +4,7 @@ import { ArrowLeft, CheckCircle, Clock, AlertCircle, Building2, User, Tag, Calen
 import { getUser } from '../utils/auth';
 import { dataService } from '../services/dataService';
 import type { Ticket } from '../types/entities';
+import { SignaturePad } from '../components/SignaturePad';
 
 interface Comment {
   id: string;
@@ -115,6 +116,7 @@ export const TicketDetailView = () => {
   // Assignment
   const [users, setUsers] = useState<{id: string, first_name: string, last_name: string}[]>([]);
   const [assigneeId, setAssigneeId] = useState('');
+  const [showSignaturePad, setShowSignaturePad] = useState(false);
 
   const isAdminOrManager = currentUser && ['admin', 'manager'].includes(currentUser.role);
 
@@ -225,7 +227,22 @@ export const TicketDetailView = () => {
         setCommentBody('');
         setIsInternal(false);
       } else { setCommentError(res.error || 'Fehler beim Senden.'); }
-    } catch { setCommentError('Netzwerkfehler.'); } finally { setSubmittingComment(false); }
+  const handleSignatureSave = async (dataUrl: string) => {
+    try {
+      const res = await fetch(`/api/tickets/${id}/signature`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signature_data: dataUrl })
+      });
+      if (res.ok) {
+        setTicket(prev => prev ? { ...prev, signature_data: dataUrl } : null);
+        setShowSignaturePad(false);
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2500);
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const selectStyle: React.CSSProperties = {
@@ -288,6 +305,17 @@ export const TicketDetailView = () => {
               {ticket.description || 'Keine Beschreibung vorhanden.'}
             </div>
           </div>
+
+          {/* Signature Display if exists */}
+          {ticket.signature_data && (
+            <div className="card" style={{ marginBottom: 20 }}>
+              <h3 style={{ fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.04em', marginBottom: 14 }}>Unterschrift / Abnahme</h3>
+              <div style={{ backgroundColor: '#fcfcfc', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: 12, textAlign: 'center' }}>
+                <img src={ticket.signature_data} alt="Unterschrift" style={{ maxWidth: '100%', height: 100, objectFit: 'contain' }} />
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>Digital signiert am {new Date(ticket.updated_at).toLocaleDateString('de-CH')}</div>
+              </div>
+            </div>
+          )}
 
           {/* Activity / Comments */}
           <div className="card">
@@ -400,6 +428,11 @@ export const TicketDetailView = () => {
                     ✋ Ticket übernehmen
                   </button>
                 )}
+                {!ticket.signature_data && (ticket.status === 'resolved' || ticket.status === 'closed') && (
+                  <button className="btn-secondary" style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={() => setShowSignaturePad(true)}>
+                    ✍ Unterschrift leisten
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -443,6 +476,12 @@ export const TicketDetailView = () => {
           </div>
         </div>
       </div>
+
+      {showSignaturePad && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100, padding: 16 }}>
+          <SignaturePad onSave={handleSignatureSave} onCancel={() => setShowSignaturePad(false)} />
+        </div>
+      )}
     </div>
   );
 };

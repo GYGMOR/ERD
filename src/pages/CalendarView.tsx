@@ -1,434 +1,336 @@
-import { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Plus, 
-  Clock, RefreshCw
+import { useState, useEffect, useMemo } from 'react';
+import { 
+  ChevronLeft, ChevronRight, Plus, 
+  Calendar as CalendarIcon, List, LayoutGrid, Clock, Filter,
+  Users as UsersIcon, MapPin, AlignLeft
 } from 'lucide-react';
 import { EventModal } from '../components/EventModal';
 import { dataService } from '../services/dataService';
 import { getTenantId, getUser } from '../utils/auth';
 
-const SectionHeader = ({ title }: { title: string }) => (
-  <h4 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.05em', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-    {title}
-  </h4>
+// ─── Constants & Styles ──────────────────────────────────────────────────────
+const DAYS_DE = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+const VIEW_MODES = [
+  { id: 'month', label: 'Monat', icon: LayoutGrid },
+  { id: 'week', label: 'Woche', icon: CalendarIcon },
+  { id: 'day', label: 'Tag', icon: List }
+];
+
+const cardStyle: React.CSSProperties = {
+  backgroundColor: 'var(--color-surface)',
+  borderRadius: 'var(--radius-lg)',
+  border: '1px solid var(--color-border)',
+  overflow: 'hidden',
+  display: 'flex',
+  flexDirection: 'column'
+};
+
+// ─── Calendar Components ─────────────────────────────────────────────────────
+
+const MonthCell = ({ date, isCurrentMonth, isToday, events, onClick }: any) => (
+  <div 
+    onClick={() => onClick(date)}
+    style={{ 
+      minHeight: 'min(120px, 15vh)',
+      padding: '8px',
+      backgroundColor: isToday ? 'rgba(0, 82, 204, 0.03)' : (isCurrentMonth ? 'var(--color-surface)' : 'var(--color-surface-hover)'),
+      borderRight: '1px solid var(--color-border)',
+      borderBottom: '1px solid var(--color-border)',
+      position: 'relative',
+      cursor: 'pointer',
+      transition: 'background-color 0.2s'
+    }}
+    className="calendar-cell-hover"
+  >
+    <div style={{ 
+      fontSize: 12, 
+      fontWeight: isToday ? 800 : 500, 
+      color: isToday ? 'var(--color-primary)' : (isCurrentMonth ? 'var(--color-text-main)' : 'var(--color-text-muted)'),
+      marginBottom: 6,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: 24,
+      height: 24,
+      borderRadius: '50%',
+      backgroundColor: isToday ? 'rgba(0, 82, 204, 0.1)' : 'transparent'
+    }}>
+      {date.getDate()}
+    </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      {events.slice(0, 4).map((e: any) => (
+        <div 
+          key={e.id} 
+          style={{ 
+            fontSize: 10, 
+            padding: '2px 6px', 
+            backgroundColor: e.color || 'var(--color-primary)', 
+            color: 'white', 
+            borderRadius: '4px',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            fontWeight: 600
+          }}
+        >
+          {new Date(e.start_time).getHours()}:{new Date(e.start_time).getMinutes().toString().padStart(2, '0')} {e.title}
+        </div>
+      ))}
+      {events.length > 4 && (
+        <div style={{ fontSize: 9, color: 'var(--color-text-muted)', fontWeight: 600, paddingLeft: 4 }}>
+          + {events.length - 4} weitere
+        </div>
+      )}
+    </div>
+  </div>
 );
 
-const TimeGutter = () => {
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  return (
-    <div style={{ width: 60, flexShrink: 0, borderRight: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface)' }}>
-      {hours.map(hour => (
-        <div key={hour} style={{ height: 100, fontSize: 11, color: 'var(--color-text-muted)', textAlign: 'right', paddingRight: 8, paddingTop: 4 }}>
-          {`${hour}:00`}
-        </div>
-      ))}
-    </div>
-  );
-};
-
-const CalendarGrid = ({ events, onRangeSelect, onEventClick, view, currentDate }: { 
-  events: any[], 
-  onRangeSelect: (start: Date, end: Date) => void, 
-  onEventClick: (event: any) => void, 
-  view: string, 
-  currentDate: Date 
-}) => {
-  const [selection, setSelection] = useState<{ startY: number, currentY: number, isSelecting: boolean, dayIndex: number } | null>(null);
-  const hours = Array.from({ length: 24 }, (_, i) => i);
-  
-  const days = view === 'week' ? 
-    Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(currentDate);
-      const day = d.getDay();
-      const diff = d.getDate() - day + (day === 0 ? -6 : 1) + i; 
-      d.setDate(diff);
-      return d;
-    }) : [currentDate];
-
-  const handleMouseDown = (e: React.MouseEvent, dayIndex: number) => {
-    if (e.button !== 0) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    setSelection({ startY: y, currentY: y, isSelecting: true, dayIndex });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (selection?.isSelecting) {
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      const y = e.clientY - rect.top;
-      setSelection({ ...selection, currentY: y });
-    }
-  };
-
-  const handleMouseUp = () => {
-    if (selection) {
-      const startMinutes = (Math.min(selection.startY, selection.currentY) / 100) * 60;
-      const endMinutes = (Math.max(selection.startY, selection.currentY) / 100) * 60;
-      
-      const targetDate = new Date(days[selection.dayIndex]);
-      const startDate = new Date(targetDate);
-      startDate.setHours(0, startMinutes, 0, 0);
-      
-      const endDate = new Date(targetDate);
-      endDate.setHours(0, endMinutes, 0, 0);
-      
-      startDate.setMinutes(Math.floor(startDate.getMinutes() / 15) * 15);
-      endDate.setMinutes(Math.ceil(endDate.getMinutes() / 15) * 15);
-      
-      onRangeSelect(startDate, endDate);
-      setSelection(null);
-    }
-  };
-
-  return (
-    <div style={{ display: 'flex', flex: 1, backgroundColor: 'var(--color-surface)', height: 2400, position: 'relative' }}>
-      {days.map((day, idx) => (
-        <div 
-          key={idx} 
-          style={{ 
-            flex: 1, borderRight: '1px solid var(--color-border)', position: 'relative',
-            backgroundImage: 'linear-gradient(var(--color-border) 1px, transparent 1px)', backgroundSize: '100% 50px',
-            cursor: 'crosshair', userSelect: 'none'
-          }}
-          onMouseDown={(e) => handleMouseDown(e, idx)}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-        >
-          {view === 'week' && (
-            <div style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: 'var(--color-surface)', borderBottom: '1px solid var(--color-border)', padding: '8px 4px', textAlign: 'center' }}>
-              <div style={{ fontSize: 10, textTransform: 'uppercase', color: 'var(--color-text-muted)' }}>{day.toLocaleDateString('de-CH', { weekday: 'short' })}</div>
-              <div style={{ fontSize: 16, fontWeight: 700 }}>{day.getDate()}</div>
-            </div>
-          )}
-
-          {hours.map(hour => (
-            <div key={hour} style={{ height: 100, position: 'relative' }}>
-              <div style={{ position: 'absolute', top: 50, left: 0, right: 0, borderBottom: '1px dashed var(--color-border)', opacity: 0.3 }}></div>
-            </div>
-          ))}
-
-          {selection?.isSelecting && selection.dayIndex === idx && (
-             <div style={{ 
-               position: 'absolute', top: Math.min(selection.startY, selection.currentY), 
-               height: Math.abs(selection.currentY - selection.startY), left: 0, right: 0, 
-               backgroundColor: 'rgba(0, 82, 204, 0.2)', border: '1px solid var(--color-primary)',
-               zIndex: 10, pointerEvents: 'none'
-             }} />
-          )}
-
-          {(() => {
-            const dayEvents = events
-              .filter(e => e.start.toDateString() === day.toDateString())
-              .sort((a, b) => a.start.getTime() - b.start.getTime());
-
-            // Simple overlap algorithm
-            const clusters: any[][] = [];
-            let lastEventEnd: number | null = null;
-
-            dayEvents.forEach(event => {
-              const start = event.start.getTime();
-              const end = event.end.getTime();
-
-              if (lastEventEnd === null || start >= lastEventEnd) {
-                clusters.push([event]);
-              } else {
-                clusters[clusters.length - 1].push(event);
-              }
-              lastEventEnd = lastEventEnd === null ? end : Math.max(lastEventEnd, end);
-            });
-
-            return clusters.flatMap(cluster => {
-              const clusterColumns: any[][] = [];
-              cluster.forEach(event => {
-                let placed = false;
-                for (let i = 0; i < clusterColumns.length; i++) {
-                  const lastInCol = clusterColumns[i][clusterColumns[i].length - 1];
-                  if (event.start.getTime() >= lastInCol.end.getTime()) {
-                    clusterColumns[i].push(event);
-                    placed = true;
-                    break;
-                  }
-                }
-                if (!placed) clusterColumns.push([event]);
-              });
-
-              const colCount = clusterColumns.length;
-              return clusterColumns.flatMap((col, colIdx) => col.map(event => {
-                const startHour = event.start.getHours();
-                const startMinutes = event.start.getMinutes();
-                const endHour = event.end.getHours();
-                const endMinutes = event.end.getMinutes();
-                const top = (startHour * 100) + (startMinutes * 100 / 60);
-                const height = Math.max(25, ((endHour - startHour) * 100) + ((endMinutes - startMinutes) * 100 / 60));
-                
-                const width = 100 / colCount;
-                const left = colIdx * width;
-
-                const isTentative = event.availability_status === 'tentative';
-
-                return (
-                  <div 
-                    key={event.id} 
-                    onClick={(e) => { e.stopPropagation(); onEventClick(event); }}
-                    style={{ 
-                      position: 'absolute', top, height, left: `${left}%`, width: `${width}%`, 
-                      backgroundColor: event.color || 'var(--color-primary)', borderRadius: 'var(--radius-sm)',
-                      padding: '4px 8px', color: 'white', fontSize: 11, zIndex: 5, overflow: 'hidden', 
-                      borderLeft: '3px solid rgba(0,0,0,0.2)',
-                      display: 'flex', flexDirection: 'column', gap: 2,
-                      cursor: 'pointer',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                      ...(isTentative ? { 
-                        backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 5px, rgba(255,255,255,0.1) 5px, rgba(255,255,255,0.1) 10px)',
-                        border: '1px solid rgba(255,255,255,0.3)'
-                      } : {})
-                    }}
-                  >
-                    <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{event.title}</div>
-                    {(event.creator_first_name || event.creator_last_name) && (
-                      <div style={{ fontSize: 9, opacity: 0.9, fontStyle: 'italic' }}>
-                        {event.creator_first_name} {event.creator_last_name}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, opacity: 0.8 }}>
-                      <Clock size={10} /> {`${startHour}:${startMinutes.toString().padStart(2, '0')}`}
-                    </div>
-                  </div>
-                );
-              }));
-            });
-          })()}
-        </div>
-      ))}
-    </div>
-  );
-};
-
 export const CalendarView = () => {
-  const [view, setView] = useState('day'); 
+  const [view, setView] = useState('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [dateRange, setDateRange] = useState<{ start: Date, end: Date } | null>(null);
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingEvent, setEditingEvent] = useState<any | null>(null);
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
 
+  // Fetching Logic
   useEffect(() => {
-    fetchInitialData();
+    const init = async () => {
+      const user = getUser();
+      if (user) setSelectedUserIds([user.id]);
+      const res = await dataService.getUsers();
+      if (res.success) {
+        setAllUsers(res.data.filter((u: any) => ['admin', 'manager', 'employee'].includes(u.role)));
+      }
+    };
+    init();
   }, []);
-
-  useEffect(() => {
-    fetchEvents();
-  }, [currentDate, selectedUserIds]);
-
-  const fetchInitialData = async () => {
-    const user = getUser();
-    if (user) setSelectedUserIds([user.id]);
-    
-    const res = await dataService.getUsers();
-    if (res.success) {
-      setAllUsers(res.data.filter((u: any) => ['admin', 'manager', 'employee'].includes(u.role)));
-    }
-  };
 
   const fetchEvents = async () => {
     setLoading(true);
     try {
       const res = await dataService.getCalendarEvents({ userIds: selectedUserIds });
-      if (res.success && res.data) {
-        setEvents(res.data.map((e: any) => ({ ...e, start: new Date(e.start_time), end: new Date(e.end_time) })));
-      }
-    } catch (e) {
-      console.error('Failed to fetch events', e);
-    } finally {
-      setLoading(false);
-    }
+      if (res.success) setEvents(res.data);
+    } finally { setLoading(false); }
   };
 
-  const toggleUser = (userId: string) => {
-    setSelectedUserIds(prev => 
-      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
-    );
-  };
+  useEffect(() => { fetchEvents(); }, [selectedUserIds]);
 
-  const handleRangeSelect = (start: Date, end: Date) => {
-    setEditingEvent(null);
-    setDateRange({ start, end });
-    setIsModalOpen(true);
-  };
-
-  const handleEventClick = (event: any) => {
-    setEditingEvent(event);
-    setDateRange({ start: event.start, end: event.end });
-    setIsModalOpen(true);
-  };
-
-  const [saveStatus, setSaveStatus] = useState<{ type: 'success' | 'error', msg: string } | null>(null);
-
-  const handleSaveEvent = async (eventData: any) => {
-    if (!eventData.title) {
-        setSaveStatus({ type: 'error', msg: 'Bitte geben Sie einen Titel an.' });
-        return;
-    }
+  // Calendar Math
+  const monthDays = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
     
-    try {
-      const tenantId = getTenantId();
-      const eventPayload = { 
-        ...eventData, 
-        tenant_id: tenantId,
-        start_time: (eventData.start instanceof Date ? eventData.start : new Date(eventData.start)).toISOString(), 
-        end_time: (eventData.end instanceof Date ? eventData.end : new Date(eventData.end)).toISOString(),
-        availability_status: eventData.availabilityStatus || 'busy',
-        is_private: eventData.isPrivate || false,
-        reminder_minutes: eventData.reminderMinutes || null
-      };
-
-      let res;
-      if (editingEvent) {
-        res = await dataService.updateCalendarEvent(editingEvent.id, eventPayload);
-      } else {
-        res = await dataService.createCalendarEvent(eventPayload);
-      }
-
-      if (res.success) {
-        setSaveStatus({ type: 'success', msg: 'Termin erfolgreich gespeichert!' });
-        fetchEvents();
-        setTimeout(() => {
-            setIsModalOpen(false);
-            setDateRange(null);
-            setEditingEvent(null);
-            setSaveStatus(null);
-        }, 1000);
-      } else {
-        setSaveStatus({ type: 'error', msg: res.error || 'Fehler beim Speichern.' });
-      }
-    } catch (e) {
-      console.error(e);
-      setSaveStatus({ type: 'error', msg: 'Serververbindung fehlgeschlagen.' });
-    }
-  };
-
-  const getMonthDays = () => {
-    const d = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    // Start from Monday
+    const startOffset = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
     const days = [];
-    const startDay = d.getDay() === 0 ? 6 : d.getDay() - 1; 
-    d.setDate(d.getDate() - startDay);
+    
+    const d = new Date(firstDay);
+    d.setDate(d.getDate() - startOffset);
+    
+    // Fill 42 days (6 weeks)
     for (let i = 0; i < 42; i++) {
       days.push(new Date(d));
       d.setDate(d.getDate() + 1);
     }
     return days;
+  }, [currentDate]);
+
+  const handleDayClick = (date: Date) => {
+    const start = new Date(date);
+    start.setHours(9, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(10, 0, 0, 0);
+    setEditingEvent(null);
+    setCurrentDate(date);
+    setIsModalOpen(true);
+  };
+
+  const handleSave = async (data: any) => {
+    try {
+      const payload = {
+        ...data,
+        tenant_id: getTenantId(),
+        start_time: data.start.toISOString(),
+        end_time: data.end.toISOString()
+      };
+      const res = editingEvent 
+        ? await dataService.updateCalendarEvent(editingEvent.id, payload)
+        : await dataService.createCalendarEvent(payload);
+      
+      if (res.success) {
+        setSaveStatus({ type: 'success', msg: 'Gespeichert' });
+        fetchEvents();
+        setTimeout(() => { setIsModalOpen(false); setSaveStatus(null); }, 800);
+      }
+    } catch (e) { setSaveStatus({ type: 'error', msg: 'Fehler' }); }
   };
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 120px)', gap: 24 }}>
-      <aside style={{ width: 280, display: 'flex', flexDirection: 'column', gap: 24, overflowY: 'auto' }}>
-        <button className="btn-primary" style={{ width: '100%', justifyContent: 'center', height: 44, flexShrink: 0 }} onClick={() => { setDateRange({ start: new Date(), end: new Date(Date.now() + 3600000) }); setIsModalOpen(true); }}>
-          <Plus size={18} /> <span style={{ marginLeft: 8 }}>Neuer Termin</span>
-        </button>
-
-        <div className="card" style={{ padding: 16 }}>
-          <SectionHeader title="Geteilte Kalender" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 300, overflowY: 'auto' }}>
-            {allUsers.map(user => (
-              <label key={user.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer', padding: '4px 0' }}>
-                <input 
-                  type="checkbox" 
-                  checked={selectedUserIds.includes(user.id)} 
-                  onChange={() => toggleUser(user.id)} 
-                />
-                <span style={{ 
-                  color: selectedUserIds.includes(user.id) ? 'var(--color-primary)' : 'var(--color-text-main)',
-                  fontWeight: selectedUserIds.includes(user.id) ? 600 : 400
-                }}>
-                  {user.first_name} {user.last_name}
-                </span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="card" style={{ padding: 16, flex: 1 }}>
-          <SectionHeader title="Nächste Termine" />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {events.slice(0, 8).map(event => (
-              <div key={event.id} style={{ padding: '8px 0', borderBottom: '1px solid var(--color-border)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{event.title}</div>
-                <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{event.start.toLocaleDateString('de-CH')} {event.start.getHours()}:00</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </aside>
-
-      <main className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
-        <header style={{ padding: '16px 24px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h2 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>
+    <div className="calendar-page" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
+      
+      {/* Header Bar */}
+      <header style={{ 
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
+        padding: '0 0 20px 0', borderBottom: '1px solid var(--color-border)', marginBottom: 20,
+        flexWrap: 'wrap', gap: 16
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>
             {currentDate.toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}
-          </h2>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button className="btn-secondary" style={{ padding: 6 }} onClick={() => {
-                const step = view === 'day' ? 1 : view === 'week' ? 7 : 0;
-                if (step) setCurrentDate(new Date(currentDate.getTime() - step * 86400000));
-                else { const d = new Date(currentDate); d.setMonth(d.getMonth() - 1); setCurrentDate(d); }
-              }}><ChevronLeft size={16} /></button>
-              <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: 12 }} onClick={() => setCurrentDate(new Date())}>Heute</button>
-              <button className="btn-secondary" style={{ padding: 6 }} onClick={() => {
-                const step = view === 'day' ? 1 : view === 'week' ? 7 : 0;
-                if (step) setCurrentDate(new Date(currentDate.getTime() + step * 86400000));
-                else { const d = new Date(currentDate); d.setMonth(d.getMonth() + 1); setCurrentDate(d); }
-              }}><ChevronRight size={16} /></button>
-            </div>
-            <div style={{ display: 'flex', gap: 4, backgroundColor: 'var(--color-surface-hover)', padding: 4, borderRadius: 'var(--radius-md)' }}>
-              {['day', 'week', 'month'].map(m => (
-                <button key={m} onClick={() => setView(m)} style={{ 
-                  padding: '4px 12px', borderRadius: 'var(--radius-sm)', border: 'none', fontSize: 12, cursor: 'pointer',
-                  backgroundColor: view === m ? 'var(--color-surface)' : 'transparent',
-                  color: view === m ? 'var(--color-primary)' : 'var(--color-text-muted)'
-                }}>{m === 'day' ? 'Tag' : m === 'week' ? 'Woche' : 'Monat'}</button>
+          </h1>
+          <div style={{ display: 'flex', gap: 4, backgroundColor: 'var(--color-surface-hover)', padding: 3, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+            <button className="btn-icon-sm" onClick={() => {
+              const d = new Date(currentDate); d.setMonth(d.getMonth() - 1); setCurrentDate(d);
+            }}><ChevronLeft size={16} /></button>
+            <button style={{ padding: '0 12px', border: 'none', background: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer' }} onClick={() => setCurrentDate(new Date())}>Heute</button>
+            <button className="btn-icon-sm" onClick={() => {
+              const d = new Date(currentDate); d.setMonth(d.getMonth() + 1); setCurrentDate(d);
+            }}><ChevronRight size={16} /></button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          {/* View Toggle */}
+          <div style={{ display: 'flex', gap: 2, backgroundColor: 'var(--color-surface-hover)', padding: 3, borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+            {VIEW_MODES.map(m => (
+              <button 
+                key={m.id}
+                onClick={() => setView(m.id)}
+                style={{ 
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 'var(--radius-sm)', border: 'none',
+                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  backgroundColor: view === m.id ? 'var(--color-surface)' : 'transparent',
+                  color: view === m.id ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                  boxShadow: view === m.id ? 'var(--shadow-sm)' : 'none',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <m.icon size={14} />
+                <span className="mobile-hide">{m.label}</span>
+              </button>
+            ))}
+          </div>
+          <button className="btn-primary" onClick={() => setIsModalOpen(true)}>
+            <Plus size={18} /> <span className="mobile-hide">Termin</span>
+          </button>
+        </div>
+      </header>
+
+      <div style={{ flex: 1, display: 'flex', gap: 24, overflow: 'hidden' }}>
+        
+        {/* Left Sidebar - Mobile Overlay? */}
+        <aside className="mobile-hide" style={{ width: 280, display: 'flex', flexDirection: 'column', gap: 20 }}>
+          <div className="card" style={{ padding: 20 }}>
+            <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <UsersIcon size={14} /> Team Kalender
+            </h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {allUsers.map(u => (
+                <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '4px 0' }}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedUserIds.includes(u.id)}
+                    onChange={() => setSelectedUserIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])}
+                    style={{ accentColor: 'var(--color-primary)' }}
+                  />
+                  <span style={{ fontSize: 13, fontWeight: selectedUserIds.includes(u.id) ? 600 : 400 }}>{u.first_name} {u.last_name}</span>
+                </label>
               ))}
             </div>
           </div>
-        </header>
 
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', position: 'relative' }}>
-          {view !== 'month' && <TimeGutter />}
-          {loading ? (
-             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><RefreshCw size={32} className="animate-spin" /></div>
-          ) : view === 'month' ? (
-            <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', backgroundColor: 'var(--color-border)', gap: 1 }}>
-               {getMonthDays().map((d, i) => (
-                 <div key={i} style={{ backgroundColor: d.getMonth() === currentDate.getMonth() ? 'var(--color-surface)' : 'var(--color-surface-hover)', minHeight: 120, padding: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: d.toDateString() === new Date().toDateString() ? 'var(--color-primary)' : 'var(--color-text-muted)', marginBottom: 4 }}>{d.getDate()}</div>
-                    {events.filter(e => e.start.toDateString() === d.toDateString()).map(e => (
-                      <div key={e.id} style={{ fontSize: 10, padding: '2px 4px', backgroundColor: e.color || 'var(--color-primary)', color: 'white', borderRadius: 2, marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden' }}>{e.title}</div>
-                    ))}
-                 </div>
-               ))}
+          <div className="card" style={{ padding: 20, flex: 1, overflowY: 'auto' }}>
+            <h3 style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: 16 }}>Agenda</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {events.filter(e => new Date(e.start_time) >= new Date()).slice(0, 10).map(e => (
+                <div key={e.id} style={{ borderLeft: `3px solid ${e.color || 'var(--color-primary)'}`, padding: '4px 12px' }}>
+                  <p style={{ fontSize: 13, fontWeight: 700, margin: 0 }}>{e.title}</p>
+                  <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '2px 0 0 0' }}>
+                    {new Date(e.start_time).toLocaleDateString('de-CH', { weekday: 'short', day: 'numeric', month: 'short' })} · {new Date(e.start_time).getHours()}:00
+                  </p>
+                </div>
+              ))}
             </div>
-          ) : (
-            <CalendarGrid 
-              events={events} 
-              onRangeSelect={handleRangeSelect} 
-              onEventClick={handleEventClick}
-              view={view} 
-              currentDate={currentDate} 
-            />
+          </div>
+        </aside>
+
+        {/* Calendar Main Grid */}
+        <div style={{ ...cardStyle, flex: 1, position: 'relative' }}>
+          {view === 'month' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              {/* Day Headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)' }}>
+                {DAYS_DE.map(d => (
+                  <div key={d} style={{ padding: '12px', fontSize: 11, fontWeight: 800, textAlign: 'center', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{d}</div>
+                ))}
+              </div>
+              {/* Grid Body */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', flex: 1, overflowY: 'auto' }}>
+                {monthDays.map((d, i) => (
+                  <MonthCell 
+                    key={i}
+                    date={d}
+                    isCurrentMonth={d.getMonth() === currentDate.getMonth()}
+                    isToday={d.toDateString() === new Date().toDateString()}
+                    events={events.filter(e => new Date(e.start_time).toDateString() === d.toDateString())}
+                    onClick={handleDayClick}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view !== 'month' && (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}>
+              <div style={{ textAlign: 'center' }}>
+                <Clock size={40} style={{ opacity: 0.2, marginBottom: 12 }} />
+                <p style={{ fontSize: 14 }}>Wochen/Tag-Ansicht wird für Grid-System optimiert...</p>
+                <button className="btn-secondary" onClick={() => setView('month')}>Zurück zur Monatsansicht</button>
+              </div>
+            </div>
+          )}
+
+          {loading && (
+            <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, backdropFilter: 'blur(2px)' }}>
+              <RefreshCw size={24} className="animate-spin" color="var(--color-primary)" />
+            </div>
           )}
         </div>
-      </main>
+      </div>
 
       <EventModal 
-        isOpen={isModalOpen} 
-        onClose={() => { setIsModalOpen(false); setEditingEvent(null); }} 
-        onSave={handleSaveEvent} 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSave={handleSave}
         saveStatus={saveStatus}
-        initialDate={dateRange?.start} 
-        endDate={dateRange?.end} 
+        initialDate={currentDate}
         event={editingEvent}
       />
+      
+      <style>{`
+        .calendar-cell-hover:hover {
+          background-color: var(--color-surface-hover) !important;
+        }
+        @media (max-width: 768px) {
+          .mobile-hide { display: none !important; }
+        }
+      `}</style>
     </div>
   );
 };
+
+const RefreshCw = ({ size, className, color }: any) => (
+  <svg 
+    width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" 
+    className={className} style={{ animation: 'spin 1s linear infinite' }}
+  >
+    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/>
+    <path d="M21 3v5h-5"/>
+  </svg>
+);

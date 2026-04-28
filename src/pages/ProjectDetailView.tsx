@@ -33,10 +33,16 @@ const EditProjectModal = ({ project, onClose, onSave }: any) => {
     status: project.status || 'planning', 
     priority: project.priority || 'medium', 
     start_date: project.start_date ? project.start_date.split('T')[0] : '', 
-    end_date: project.end_date ? project.end_date.split('T')[0] : '' 
+    end_date: project.end_date ? project.end_date.split('T')[0] : '',
+    assigned_to: project.assigned_to || ''
   });
+  const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/users').then(r => r.json()).then(d => { if (d.success) setUsers(d.data); });
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,6 +100,13 @@ const EditProjectModal = ({ project, onClose, onSave }: any) => {
               <input type="date" style={inputStyle} value={form.end_date} onChange={e => setForm({ ...form, end_date: e.target.value })} />
             </div>
           </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Verantwortlich</label>
+            <select style={inputStyle} value={form.assigned_to} onChange={e => setForm({ ...form, assigned_to: e.target.value })}>
+              <option value="">-- Nicht zugewiesen --</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.first_name} {u.last_name}</option>)}
+            </select>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
             <button type="button" onClick={onClose} style={{ padding: '10px 18px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', cursor: 'pointer', fontWeight: 500, color: 'var(--color-text-main)' }}>Abbrechen</button>
             <button type="submit" disabled={loading} className="btn-primary" style={{ padding: '10px 18px' }}>
@@ -113,21 +126,26 @@ export const ProjectDetailView = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [tickets, setTickets] = useState<TicketEntity[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'overview' | 'tickets' | 'documents'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'tickets' | 'journal' | 'documents'>('overview');
   const [showEdit, setShowEdit] = useState(false);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [newLog, setNewLog] = useState('');
+  const [submittingLog, setSubmittingLog] = useState(false);
 
   const fetchData = async () => {
     try {
       const projApi = isInternal() ? '/api/projects' : '/api/portal/projects';
       const ticketApi = isInternal() ? '/api/tickets' : '/api/portal/tickets';
       
-      const [projRes, ticketRes] = await Promise.all([
+      const [projRes, ticketRes, logsRes] = await Promise.all([
         fetch(projApi),
-        fetch(ticketApi)
+        fetch(ticketApi),
+        fetch(`/api/projects/${id}/logs`)
       ]);
       
       const projData = await projRes.json();
       const ticketData = await ticketRes.json();
+      const logsData = await logsRes.json();
       
       if (projData.success) {
         const found = projData.data.find((p: Project) => p.id === id);
@@ -136,12 +154,37 @@ export const ProjectDetailView = () => {
           if (ticketData.success) {
             setTickets(ticketData.data.filter((t: TicketEntity) => t.company_id === found.company_id));
           }
+          if (logsData.success) {
+            setLogs(logsData.data);
+          }
         }
       }
     } catch (err) {
       console.error('Failed to load project details', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAddLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newLog.trim()) return;
+    setSubmittingLog(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: newLog, type: 'note' })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setLogs([data.data, ...logs]);
+        setNewLog('');
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setSubmittingLog(false);
     }
   };
 
@@ -304,6 +347,7 @@ export const ProjectDetailView = () => {
       <div style={{ display: 'flex', gap: 32, borderBottom: '1px solid var(--color-border)', marginBottom: 32 }}>
         {[
           { id: 'overview', label: 'Übersicht', icon: Activity },
+          { id: 'journal', label: 'Journal / Logbuch', icon: FileText, count: logs.length },
           { id: 'tickets', label: 'Verknüpfte Tickets', icon: Ticket, count: tickets.length },
           { id: 'documents', label: 'Dokumente', icon: FileText, count: 0 },
         ].map(tab => {
@@ -411,19 +455,84 @@ export const ProjectDetailView = () => {
             
             {/* Team / Assignment */}
             <div className="card" style={{ padding: 24 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Beteiligte</h3>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600 }}>
-                  SY
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Projektleitung</h3>
+              {project.assignee_first_name ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600 }}>
+                    {project.assignee_first_name[0]}{project.assignee_last_name[0]}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{project.assignee_first_name} {project.assignee_last_name}</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Hauptverantwortlich</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>System Admin</div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>Projektleiter</div>
-                </div>
-              </div>
+              ) : (
+                <p style={{ color: 'var(--color-text-muted)', fontSize: 14, fontStyle: 'italic' }}>Niemand zugewiesen.</p>
+              )}
             </div>
           </div>
           
+        </div>
+      )}
+
+      {activeTab === 'journal' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24, alignItems: 'start' }}>
+          <div>
+            {/* Add Log Entry */}
+            <div className="card" style={{ padding: 24, marginBottom: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Eintrag hinzufügen</h3>
+              <form onSubmit={handleAddLog}>
+                <textarea 
+                  value={newLog}
+                  onChange={e => setNewLog(e.target.value)}
+                  placeholder="Was gibt es Neues zum Projekt?"
+                  style={{ ...inputStyle, minHeight: 100, marginBottom: 12, resize: 'vertical' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button type="submit" className="btn-primary" disabled={submittingLog || !newLog.trim()}>
+                    {submittingLog ? 'Wird gespeichert...' : 'Eintrag speichern'}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            {/* Log Timeline */}
+            <div className="card" style={{ padding: 24 }}>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 24 }}>Verlauf</h3>
+              {logs.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--color-text-muted)' }}>
+                  Keine Einträge im Logbuch vorhanden.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                  {logs.map((log) => (
+                    <div key={log.id} style={{ display: 'flex', gap: 16 }}>
+                      <div style={{ flexShrink: 0, width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-surface-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontWeight: 600, fontSize: 12 }}>
+                        {log.first_name[0]}{log.last_name[0]}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14 }}>{log.first_name} {log.last_name}</span>
+                          <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{new Date(log.created_at).toLocaleString('de-CH')}</span>
+                        </div>
+                        <div style={{ fontSize: 14, lineHeight: 1.5, color: 'var(--color-text-main)', whiteSpace: 'pre-wrap' }}>
+                          {log.message}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: 24 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>Journal-Info</h3>
+            <p style={{ fontSize: 14, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              Das Journal dient der lückenlosen Dokumentation des Projektfortschritts. 
+              Hier können wichtige Meilensteine, Notizen und Status-Updates festgehalten werden.
+            </p>
+          </div>
         </div>
       )}
 
