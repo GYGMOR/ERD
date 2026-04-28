@@ -7,6 +7,37 @@ services:
     env_file:
       - .env
     restart: always
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15-alpine
+    container_name: tool_db
+    restart: always
+    environment:
+      POSTGRES_USER: sysadmin
+      POSTGRES_PASSWORD: rzP3MHh?ZDckRe # <--- ÄNDERE DAS!
+      POSTGRES_DB: nexservice
+    ports:
+      - "5432:5432"
+    networks:
+      - web
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: tool_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@hed-it.ch # <--- Deine Login-Mail für pgAdmin
+      PGADMIN_DEFAULT_PASSWORD: admin # <--- Dein Login-Passwort für pgAdmin
+    ports:
+      - "8080:80" # pgAdmin ist dann über http://DEINE-SERVER-IP:8080 erreichbar
+    networks:
+      - web
+    depends_on:
+      - db
 
   watchtower:
     image: containrrr/watchtower
@@ -18,3 +49,6 @@ services:
 networks:
   web:
     external: true
+
+volumes:
+  postgres_data:
