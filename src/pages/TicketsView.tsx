@@ -218,76 +218,76 @@ export const TicketsView = () => {
     </div>
 
     {/* Table */}
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-      <div className="table-responsive">
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-          <thead>
-            <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>ID</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Betreff</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Kunde</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Status</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Priorität</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Zuständig</th>
-              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Erstellt</th>
+    <div className="table-responsive">
+      <table className="mobile-card-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+        <thead>
+          <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>ID</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Betreff</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Kunde</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Status</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Priorität</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Zuständig</th>
+            <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Erstellt</th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Lade Tickets...</td></tr>
+          ) : filtered.length === 0 ? (
+            <tr>
+              <td colSpan={7} style={{ padding: 48, textAlign: 'center' }}>
+                <div style={{ color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                  <TicketIcon size={40} style={{ opacity: 0.2 }} />
+                  <span style={{ fontWeight: 500 }}>{hasFilters ? 'Keine Tickets für diese Filter.' : 'Noch keine Tickets vorhanden.'}</span>
+                  {hasFilters && <button onClick={clearFilters} style={{ fontSize: 13, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>Filter löschen</button>}
+                </div>
+              </td>
             </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-muted)' }}>Lade Tickets...</td></tr>
-            ) : filtered.length === 0 ? (
-              <tr>
-                <td colSpan={7} style={{ padding: 48, textAlign: 'center' }}>
-                  <div style={{ color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                    <TicketIcon size={40} style={{ opacity: 0.2 }} />
-                    <span style={{ fontWeight: 500 }}>{hasFilters ? 'Keine Tickets für diese Filter.' : 'Noch keine Tickets vorhanden.'}</span>
-                    {hasFilters && <button onClick={clearFilters} style={{ fontSize: 13, color: 'var(--color-primary)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>Filter löschen</button>}
-                  </div>
-                </td>
-              </tr>
-            ) : filtered.map((ticket, i) => (
-              <tr
-                key={ticket.id}
-                onClick={() => navigate(`/tickets/${ticket.id}`)}
-                style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid var(--color-border)', cursor: 'pointer', transition: 'background-color var(--transition-fast)' }}
-                className="hover-bg-row"
-              >
-                <td style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-primary)', fontSize: 13 }}>TKT-{ticket.id.substring(0, 6).toUpperCase()}</td>
-                <td style={{ padding: '14px 24px', fontWeight: 500, maxWidth: 280 }}>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ticket.title}</div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 1 }}>{ticket.type}</div>
-                </td>
-                <td style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 14 }}>{ticket.company_name || '–'}</td>
-                <td style={{ padding: '14px 24px' }}>
+          ) : filtered.map((ticket, i) => (
+            <tr
+              key={ticket.id}
+              onClick={() => navigate(`/tickets/${ticket.id}`)}
+              style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid var(--color-border)', cursor: 'pointer', transition: 'background-color var(--transition-fast)' }}
+              className="hover-bg-row"
+            >
+              <td data-label="ID" style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-primary)', fontSize: 13 }}>TKT-{ticket.id.substring(0, 6).toUpperCase()}</td>
+              <td data-label="Betreff" style={{ padding: '14px 24px', fontWeight: 500, maxWidth: 280 }}>
+                <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ticket.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 1 }}>{ticket.type}</div>
+              </td>
+              <td data-label="Kunde" style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 14 }}>{ticket.company_name || '–'}</td>
+              <td data-label="Status" style={{ padding: '14px 24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <span className={'badge ' + (STATUS_CLS[ticket.status] || 'info')} style={{ fontSize: 12, display: 'flex', alignItems: 'center', width: 'fit-content' }}>
                     <StatusDot status={ticket.status} />
                     {STATUS_LABEL[ticket.status] || ticket.status}
                   </span>
-                </td>
-                <td style={{ padding: '14px 24px' }}>
-                  <span className={'badge ' + (PRIORITY_CLS[ticket.priority] || 'info')} style={{ fontSize: 12 }}>
-                    {PRIORITY_LABEL[ticket.priority] || ticket.priority}
-                  </span>
-                </td>
-                <td style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 14 }}>
-                  {ticket.assignee_first_name ? `${ticket.assignee_first_name} ${ticket.assignee_last_name}` : (
-                    <button 
-                      onClick={(e) => takeTicket(e, ticket.id)}
-                      className="btn-secondary"
-                      style={{ padding: '4px 10px', fontSize: 11, fontWeight: 700 }}
-                    >
-                      Übernehmen
-                    </button>
-                  )}
-                </td>
-                <td style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 13 }}>
-                  {new Date(ticket.created_at).toLocaleDateString('de-CH')}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+              </td>
+              <td data-label="Priorität" style={{ padding: '14px 24px' }}>
+                <span className={'badge ' + (PRIORITY_CLS[ticket.priority] || 'info')} style={{ fontSize: 12 }}>
+                  {PRIORITY_LABEL[ticket.priority] || ticket.priority}
+                </span>
+              </td>
+              <td data-label="Zuständig" style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 14 }}>
+                {ticket.assignee_first_name ? `${ticket.assignee_first_name} ${ticket.assignee_last_name}` : (
+                  <button 
+                    onClick={(e) => takeTicket(e, ticket.id)}
+                    className="btn-secondary"
+                    style={{ padding: '4px 10px', fontSize: 11, fontWeight: 700 }}
+                  >
+                    Übernehmen
+                  </button>
+                )}
+              </td>
+              <td data-label="Erstellt" style={{ padding: '14px 24px', color: 'var(--color-text-muted)', fontSize: 13 }}>
+                {new Date(ticket.created_at).toLocaleDateString('de-CH')}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
 
     {showModal && (

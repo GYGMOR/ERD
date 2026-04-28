@@ -202,13 +202,13 @@ export const UsersView = () => {
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
         <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 600, letterSpacing: '-0.02em' }}>Benutzerverwaltung</h1>
-          <p style={{ color: 'var(--color-text-muted)', marginTop: 4 }}>Benutzer verwalten, Rollen vergeben und Zugänge steuern.</p>
+          <h1 style={{ fontSize: 'min(1.75rem, 6vw)', fontWeight: 600, letterSpacing: '-0.02em' }}>Benutzerverwaltung</h1>
+          <p style={{ color: 'var(--color-text-muted)', marginTop: 4, fontSize: 14 }}>Benutzer verwalten und Zugänge steuern.</p>
         </div>
-        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => setShowModal(true)}>
-          <UserPlus size={16} /> Neuer Benutzer
+        <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }} onClick={() => setShowModal(true)}>
+          <UserPlus size={16} /> <span className="mobile-hide">Neuer Benutzer</span><span className="mobile-only">Hinzufügen</span>
         </button>
       </div>
 
@@ -243,21 +243,21 @@ export const UsersView = () => {
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 18, marginBottom: 24 }}>
+      <div className="grid-responsive grid-cols-4" style={{ gap: 18, marginBottom: 24 }}>
         {Object.entries(ROLES).map(([k, v]) => (
           <div key={k} className="card" style={{ padding: '14px 18px' }}>
             <p style={{ fontSize: 12, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-muted)' }}>{v.label}</p>
-            <h2 style={{ fontSize: '1.75rem', fontWeight: 700, marginTop: 6 }}>{users.filter(u => u.role === k).length}</h2>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginTop: 6 }}>{users.filter(u => u.role === k).length}</h2>
           </div>
         ))}
       </div>
 
       {/* Table */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+      <div className="table-responsive">
+        <table className="mobile-card-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
           <thead>
             <tr style={{ backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
-              <th onClick={() => handleSort('name')} style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', cursor: 'pointer', transition: 'color 0.2s' }}>
+              <th onClick={() => handleSort('name')} style={{ padding: '13px 20px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', cursor: 'pointer' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   Benutzer {sortBy === 'name' && (sortOrder === 'asc' ? <SortAsc size={12} /> : <SortDesc size={12} />)}
                 </div>
@@ -284,44 +284,45 @@ export const UsersView = () => {
               <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>Keine passenden Benutzer gefunden.</td></tr>
             ) : paginatedUsers.map((u, i) => (
               <tr key={u.id} style={{ borderBottom: i === users.length - 1 ? 'none' : '1px solid var(--color-border)', opacity: saving === u.id ? 0.6 : 1, transition: 'opacity 0.2s' }}>
-                <td style={{ padding: '13px 20px' }}>
+                <td data-label="Benutzer" style={{ padding: '13px 20px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: '50%', backgroundColor: avatarColor(u.id), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+                    <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: avatarColor(u.id), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 12, flexShrink: 0 }}>
                       {initials(u)}
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 600 }}>{u.first_name} {u.last_name}</div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 1 }}>ID: {u.id.substring(0, 8)}…</div>
+                    <div style={{ textAlign: 'left' }}>
+                      <div style={{ fontWeight: 600, fontSize: 14 }}>{u.first_name} {u.last_name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{u.id.substring(0, 8)}</div>
                     </div>
                   </div>
                 </td>
-                <td style={{ padding: '13px 20px', color: 'var(--color-text-muted)', fontSize: 14 }}>{u.email}</td>
-                <td style={{ padding: '13px 20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className={'badge ' + (ROLES[u.role]?.cls || 'info')} style={{ fontSize: 12 }}>{ROLES[u.role]?.label || u.role}</span>
+                <td data-label="E-Mail" style={{ padding: '13px 20px', color: 'var(--color-text-muted)', fontSize: 13 }}>{u.email}</td>
+                <td data-label="Rolle" style={{ padding: '13px 20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+                    <span className={'badge ' + (ROLES[u.role]?.cls || 'info')} style={{ fontSize: 11 }}>{ROLES[u.role]?.label || u.role}</span>
                     <select style={selectStyle} value={u.role} onChange={e => changeRole(u, e.target.value)} disabled={saving === u.id}>
                       {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                     </select>
                   </div>
                 </td>
-                <td style={{ padding: '13px 20px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <td data-label="Status" style={{ padding: '13px 20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'flex-end' }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: u.is_active ? 'var(--color-success)' : 'var(--color-text-muted)' }} />
                     <span style={{ fontSize: 13, fontWeight: 500, color: u.is_active ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
-                      {u.is_active ? 'Aktiv' : 'Deaktiviert'}
+                      {u.is_active ? 'Aktiv' : 'Aus'}
                     </span>
                   </div>
                 </td>
-                <td style={{ padding: '13px 20px', fontSize: 13, color: 'var(--color-text-muted)' }}>
+                <td data-label="Erstellt" style={{ padding: '13px 20px', fontSize: 13, color: 'var(--color-text-muted)' }}>
                   {new Date(u.created_at).toLocaleDateString('de-CH')}
                 </td>
-                <td style={{ padding: '13px 20px' }}>
+                <td data-label="Aktion" style={{ padding: '13px 20px' }}>
                   <button
                     onClick={() => toggleActive(u)}
                     disabled={saving === u.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: `1px solid ${u.is_active ? 'var(--color-danger)' : 'var(--color-success)'}`, backgroundColor: 'transparent', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: u.is_active ? 'var(--color-danger)' : 'var(--color-success)', transition: 'all 0.15s' }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: `1px solid ${u.is_active ? 'var(--color-danger)' : 'var(--color-success)'}`, backgroundColor: 'transparent', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: u.is_active ? 'var(--color-danger)' : 'var(--color-success)' }}
                   >
-                    {u.is_active ? <><UserX size={13} /> Deaktivieren</> : <><UserCheck size={13} /> Aktivieren</>}
+                    {u.is_active ? <UserX size={12} /> : <UserCheck size={12} />}
+                    {u.is_active ? 'Sperren' : 'Freigeben'}
                   </button>
                 </td>
               </tr>

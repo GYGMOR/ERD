@@ -133,25 +133,38 @@ export const NotificationCenter = () => {
 
       {open && (
         <div style={{ 
-          position: 'absolute', right: 0, top: 40, width: 380, maxHeight: 500, 
+          position: 'fixed', left: '16px', right: '16px', top: '60px', width: 'calc(100vw - 32px)', maxWidth: '380px', maxHeight: '80vh',
           display: 'flex', flexDirection: 'column',
           backgroundColor: 'var(--color-surface)', border: '1px solid var(--color-border)', 
-          borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', zIndex: 1000 
+          borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-lg)', zIndex: 1000,
+          /* Desktop override */
+          ...((window.innerWidth > 768) ? { position: 'absolute', right: 0, left: 'auto', top: 40, width: 380 } : {})
         }}>
           {/* Header */}
           <div style={{ 
             display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
             padding: '14px 18px', borderBottom: '1px solid var(--color-border)' 
           }}>
-            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Benachrichtigungen</h3>
-            {notifications.length > 0 && (
+            <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Meldungen</h3>
+            <div style={{ display: 'flex', gap: 12 }}>
               <button 
-                onClick={markAllRead}
-                style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                onClick={async () => {
+                  await fetch(`${dataService.getHeaders()['Content-Type'] === 'application/json' ? '/api' : ''}/api/notifications/test`, { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } });
+                  fetchNotifications();
+                }}
+                style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: 11, cursor: 'pointer' }}
               >
-                Alle gelesen
+                Test
               </button>
-            )}
+              {notifications.length > 0 && (
+                <button 
+                  onClick={markAllRead}
+                  style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Gelesen
+                </button>
+              )}
+            </div>
           </div>
 
           {/* List */}

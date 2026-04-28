@@ -338,6 +338,25 @@ app.post('/api/notifications/read-all', async (req: express.Request, res: expres
   }
 });
 
+app.post('/api/notifications/test', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id: userId, tenant_id } = req.user!;
+  try {
+    await createNotification({
+      tenant_id,
+      user_id: userId,
+      type: 'info',
+      entity_id: null,
+      title: 'Test-Benachrichtigung',
+      message: 'Glückwunsch! Deine Benachrichtigungen funktionieren einwandfrei. 🚀',
+      priority: 'high',
+      link: '/dashboard'
+    });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to create test notification' });
+  }
+});
+
 // ─── Invoice CSV Export ───────────────────────────────────────────────────────
 app.get('/api/invoices/export/csv', async (req: express.Request, res: express.Response) => {
   try {
@@ -1148,13 +1167,64 @@ app.post('/api/settings/test-email', authenticateToken, authorizeRole('admin'), 
   }
 });
 
+app.post('/api/users', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { first_name, last_name, email, role, password, tenant_id } = req.body;
+  if (!email || !password || !first_name || !last_name) {
+    return res.status(400).json({ success: false, error: 'All fields are required' });
+  }
+
+  try {
+    // Check if user already exists
+    const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (check.rows.length > 0) {
+      return res.status(400).json({ success: false, error: 'User with this email already exists' });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const password_hash = await bcrypt.hash(password, salt);
+
+    const result = await pool.query(
+      `INSERT INTO users (tenant_id, first_name, last_name, email, role, password_hash, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id, email, role`,
+      [tenant_id, first_name, last_name, email, role || 'employee', password_hash]
+    );
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error: any) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.patch('/api/users/:id', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { is_active, role, first_name, last_name } = req.body;
+  try {
+    const result = await pool.query(
+      `UPDATE users SET 
+        is_active = COALESCE($1, is_active),
+        role = COALESCE($2, role),
+        first_name = COALESCE($3, first_name),
+        last_name = COALESCE($4, last_name),
+        updated_at = NOW()
+       WHERE id = $5 RETURNING id, email, role, is_active`,
+      [is_active, role, first_name, last_name, id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id, role } = req.user!;
-    let query = 'SELECT id, first_name, last_name, email, role, created_at FROM users WHERE (tenant_id = $1 OR tenant_id IS NULL)';
+    let query = 'SELECT id, first_name, last_name, email, role, is_active, created_at FROM users WHERE (tenant_id = $1 OR tenant_id IS NULL)';
     const params: any[] = [tenant_id];
 
-    // If internal user, they might want to see customers too
     const includeCustomers = req.query.includeCustomers === 'true';
     const internalRoles = ['admin', 'manager', 'employee'];
     
@@ -1163,7 +1233,6 @@ app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: 
             query += " AND role IN ('admin', 'manager', 'employee')";
         }
     } else {
-        // Customers/Clients can only see staff (for now, or maybe only their own company, but usually staff is fine)
         query += " AND role IN ('admin', 'manager', 'employee')";
     }
 

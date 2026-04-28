@@ -162,7 +162,17 @@ button {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  width: 100%;
+  position: relative;
+  transition: padding var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    padding-bottom: 20px;
+  }
+  .content-area {
+    padding: 16px !important;
+  }
 }
 
 .topbar {
@@ -344,6 +354,44 @@ button {
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  margin-bottom: 1rem;
+}
+
+/* Mobile Card Table - Transforms rows to cards */
+@media (max-width: 768px) {
+  .mobile-card-table thead {
+    display: none;
+  }
+  .mobile-card-table tr {
+    display: block;
+    margin-bottom: 16px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-surface);
+    padding: 12px;
+    box-shadow: var(--shadow-sm);
+  }
+  .mobile-card-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0 !important;
+    border-bottom: 1px solid var(--color-surface-hover) !important;
+    text-align: right !important;
+    font-size: 13px !important;
+  }
+  .mobile-card-table td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-align: left;
+    margin-right: 12px;
+  }
+  .mobile-card-table td:last-child {
+    border-bottom: none !important;
+    margin-top: 8px;
+    justify-content: center;
+  }
 }
 
 .table-responsive table {
