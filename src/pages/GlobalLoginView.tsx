@@ -287,6 +287,9 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
           <p style={{ textAlign: 'center', marginTop: '32px', fontSize: '13px', color: 'var(--color-text-muted)' }}>
             Die Authentifizierung erfolgt sicher über deinen Unternehmens-Tenant.
           </p>
+          <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '10px', color: 'rgba(255,255,255,0.1)', letterSpacing: '0.1em' }}>
+            NEXSERVICE V1.5.0-PRECISION
+          </div>
         </div>
       </div>
 
