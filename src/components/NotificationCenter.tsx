@@ -149,8 +149,17 @@ export const NotificationCenter = () => {
             <div style={{ display: 'flex', gap: 12 }}>
               <button 
                 onClick={async () => {
-                  await fetch(`${dataService.getHeaders()['Content-Type'] === 'application/json' ? '/api' : ''}/api/notifications/test`, { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } });
-                  fetchNotifications();
+                  try {
+                    await fetch('/api/notifications/test', { 
+                      method: 'POST', 
+                      headers: { 
+                        'Authorization': `Bearer ${localStorage.getItem('token')}` 
+                      } 
+                    });
+                    fetchNotifications();
+                  } catch (err) {
+                    console.error('Test notification failed', err);
+                  }
                 }}
                 style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: 11, cursor: 'pointer' }}
               >
