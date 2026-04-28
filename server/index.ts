@@ -105,6 +105,9 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to tickets:', err));
     pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to contracts:', err));
 
+    // Knowledge Base Folders
+    pool.query('ALTER TABLE kb_articles ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false, ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES kb_articles(id) ON DELETE CASCADE').catch(err => console.error('Error adding folder columns to kb_articles:', err));
+
     // Files / Documents table
     pool.query(`
       CREATE TABLE IF NOT EXISTS files (
@@ -1018,13 +1021,26 @@ app.post('/api/newsletters', async (req: express.Request, res: express.Response)
 app.get('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
-    const result = await pool.query(`
+    const { parent_id } = req.query;
+    
+    let query = `
       SELECT a.*, u.first_name as author_first_name, u.last_name as author_last_name
       FROM kb_articles a
       LEFT JOIN users u ON a.user_id = u.id
       WHERE a.tenant_id = $1
-      ORDER BY a.created_at DESC
-    `, [tenant_id]);
+    `;
+    const params: any[] = [tenant_id];
+
+    if (parent_id === 'null' || !parent_id) {
+      query += ` AND a.parent_id IS NULL`;
+    } else {
+      query += ` AND a.parent_id = $2`;
+      params.push(parent_id);
+    }
+
+    query += ` ORDER BY a.is_folder DESC, a.title ASC`;
+    
+    const result = await pool.query(query, params);
     res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     console.error('Error fetching kb articles:', error);
@@ -1033,13 +1049,13 @@ app.get('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedR
 });
 
 app.post('/api/knowledge/articles', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { title, content, category, is_published, is_internal } = req.body;
+  const { title, content, category, is_published, is_internal, is_folder, parent_id } = req.body;
   const { tenant_id, id: userId } = req.user!;
   try {
     const result = await pool.query(
-      `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, userId]
+      `INSERT INTO kb_articles (tenant_id, title, content, category, is_published, is_internal, user_id, is_folder, parent_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [tenant_id, title, content, category, is_published ?? false, is_internal ?? true, userId, is_folder || false, parent_id || null]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {

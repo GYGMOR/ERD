@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Plus, Search, Filter, Clock, ChevronRight, Tag, Eye, FileText } from 'lucide-react';
+import { BookOpen, Plus, Search, Filter, Clock, ChevronRight, Tag, Eye, FileText, Folder, ArrowLeft } from 'lucide-react';
 import { DocumentExplorer } from '../components/DocumentExplorer';
-import { getTenantId } from '../utils/auth';
+import { getTenantId, getToken } from '../utils/auth';
 import type { KbArticle } from '../types/entities';
 
 export const KnowledgeBaseView = () => {
@@ -10,18 +10,29 @@ export const KnowledgeBaseView = () => {
   const [search, setSearch] = useState('');
   const [activeView, setActiveView] = useState<'articles' | 'documents'>('articles');
   const [showModal, setShowModal] = useState(false);
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [folderStack, setFolderStack] = useState<{ id: string | null, name: string }[]>([{ id: null, name: 'Hauptverzeichnis' }]);
+  
   const [newArticle, setNewArticle] = useState<Partial<KbArticle>>({
     title: '',
     content: '',
+    category: '',
     is_published: true,
     is_internal: true,
   });
 
   const tenantId = getTenantId();
+  const currentFolder = folderStack[folderStack.length - 1];
 
   const fetchData = async () => {
     try {
-      const res = await fetch('/api/kb/articles');
+      setLoading(true);
+      const parentId = currentFolder.id ? `?parent_id=${currentFolder.id}` : '?parent_id=null';
+      const res = await fetch(`/api/knowledge/articles${parentId}`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      });
       const data = await res.json();
       if (data.success) setArticles(data.data);
     } catch (err) {
@@ -32,41 +43,87 @@ export const KnowledgeBaseView = () => {
   };
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (activeView === 'articles') fetchData();
+  }, [currentFolder.id, activeView]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newArticle.title) return;
 
     try {
-      const res = await fetch('/api/kb/articles', {
+      const res = await fetch('/api/knowledge/articles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
         body: JSON.stringify({
           ...newArticle,
           tenant_id: tenantId,
+          parent_id: currentFolder.id,
+          is_folder: false
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setArticles([data.data, ...articles]);
+        setArticles([data.data, ...articles].sort((a, b) => (b.is_folder ? 1 : 0) - (a.is_folder ? 1 : 0)));
         setShowModal(false);
-        setNewArticle({ title: '', content: '', is_published: true, is_internal: true });
+        setNewArticle({ title: '', content: '', category: '', is_published: true, is_internal: true });
       }
     } catch (err) {
       console.error('Error creating article:', err);
     }
   };
 
-  const categories = Array.from(new Set(articles.map(a => a.category).filter(Boolean)));
+  const handleCreateFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName) return;
+
+    try {
+      const res = await fetch('/api/knowledge/articles', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${getToken()}`
+        },
+        body: JSON.stringify({
+          title: newFolderName,
+          tenant_id: tenantId,
+          parent_id: currentFolder.id,
+          is_folder: true,
+          is_internal: true,
+          is_published: true
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setArticles([data.data, ...articles]);
+        setShowFolderModal(false);
+        setNewFolderName('');
+      }
+    } catch (err) {
+      console.error('Error creating folder:', err);
+    }
+  };
+
+  const categories = Array.from(new Set(articles.filter(a => !a.is_folder).map(a => a.category).filter(Boolean)));
 
   const filtered = articles.filter(a => {
     const matchesSearch = a.title.toLowerCase().includes(search.toLowerCase()) || 
-                         a.content.toLowerCase().includes(search.toLowerCase());
-    const matchesCategory = !selectedCategory || a.category === selectedCategory;
+                         (a.content || '').toLowerCase().includes(search.toLowerCase());
+    const matchesCategory = !selectedCategory || a.category === selectedCategory || a.is_folder;
     return matchesSearch && matchesCategory;
   });
+
+  const enterFolder = (folder: KbArticle) => {
+    setFolderStack([...folderStack, { id: folder.id, name: folder.title }]);
+    setSelectedCategory(null);
+  };
+
+  const popFolder = (index: number) => {
+    setFolderStack(folderStack.slice(0, index + 1));
+    setSelectedCategory(null);
+  };
 
   return (
     <div className="kb-page">
@@ -79,16 +136,25 @@ export const KnowledgeBaseView = () => {
             Zentrale Dokumentation für Team und Kunden.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}>
-          <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neuer Artikel
-        </button>
+        <div style={{ display: 'flex', gap: 12 }}>
+          {activeView === 'articles' && (
+            <>
+              <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => setShowFolderModal(true)}>
+                <Folder size={16} /> Neuer Ordner
+              </button>
+              <button className="btn-primary" onClick={() => setShowModal(true)}>
+                <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neuer Artikel
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 24 }}>
         <aside>
           <div className="card" style={{ padding: 16 }}>
             <h3 style={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Filter size={14} /> Kategorien
+              <Filter size={14} /> Navigation
             </h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <button
@@ -153,12 +219,27 @@ export const KnowledgeBaseView = () => {
         <main>
           {activeView === 'articles' ? (
             <>
+              {/* Breadcrumbs */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, fontSize: 13, color: 'var(--color-text-muted)' }}>
+                {folderStack.map((f, i) => (
+                  <span key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span 
+                      style={{ cursor: 'pointer', fontWeight: i === folderStack.length - 1 ? 700 : 400, color: i === folderStack.length - 1 ? 'var(--color-text-main)' : 'inherit' }}
+                      onClick={() => popFolder(i)}
+                    >
+                      {f.name}
+                    </span>
+                    {i < folderStack.length - 1 && <ChevronRight size={14} />}
+                  </span>
+                ))}
+              </div>
+
               <div className="card" style={{ marginBottom: 20, padding: 12 }}>
                 <div style={{ position: 'relative' }}>
                   <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
                   <input
                     type="text"
-                    placeholder="Knowledge Base durchsuchen..."
+                    placeholder="In diesem Ordner suchen..."
                     className="input-field"
                     style={{ paddingLeft: 36, border: 'none', backgroundColor: 'var(--color-background)' }}
                     value={search}
@@ -168,31 +249,39 @@ export const KnowledgeBaseView = () => {
               </div>
 
               {loading ? (
-                <div style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>Lade Artikel...</div>
+                <div style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>Lade Inhalte...</div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   {filtered.length === 0 ? (
                     <div className="card" style={{ textAlign: 'center', padding: 48, color: 'var(--color-text-muted)' }}>
-                      Keine Artikel gefunden.
+                      Keine Inhalte in diesem Verzeichnis.
                     </div>
-                  ) : filtered.map(article => (
-                    <div key={article.id} className="card hover-bg-row" style={{ padding: 16, cursor: 'pointer', transition: 'all 0.2s ease' }}>
+                  ) : filtered.map(item => (
+                    <div 
+                      key={item.id} 
+                      className="card hover-bg-row" 
+                      style={{ padding: 16, cursor: 'pointer', transition: 'all 0.2s ease' }}
+                      onClick={() => item.is_folder ? enterFolder(item) : null}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                            <h3 style={{ fontSize: 15, fontWeight: 700 }}>{article.title}</h3>
-                            {article.is_internal && <span className="badge info" style={{ fontSize: 9 }}>Intern</span>}
-                          </div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, display: 'flex', gap: 12, alignItems: 'center' }}>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Tag size={12} /> {article.category || 'Allgemein'}</span>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {new Date(article.updated_at).toLocaleDateString('de-CH')}</span>
-                            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Eye size={12} /> 0 Aufrufe</span>
-                          </div>
-                          <div style={{ fontSize: 13, color: 'var(--color-text-muted)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                            {article.content.replace(/<[^>]*>/g, '')}
+                        <div style={{ display: 'flex', gap: 12 }}>
+                          {item.is_folder ? (
+                            <Folder size={20} color="var(--color-primary)" fill="var(--color-primary)" fillOpacity={0.1} />
+                          ) : (
+                            <FileText size={20} color="var(--color-text-muted)" />
+                          )}
+                          <div>
+                            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>{item.title}</h3>
+                            {!item.is_folder && (
+                              <div style={{ display: 'flex', gap: 16, marginTop: 4, color: 'var(--color-text-muted)', fontSize: 12 }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {new Date(item.created_at).toLocaleDateString('de-CH')}</span>
+                                {item.category && <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}><Tag size={12} /> {item.category}</span>}
+                                {item.is_internal && <span className="badge warning" style={{ fontSize: 10 }}>Intern</span>}
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <ChevronRight size={20} color="var(--color-border)" />
+                        <ChevronRight size={18} color="var(--color-text-muted)" />
                       </div>
                     </div>
                   ))}
@@ -200,13 +289,8 @@ export const KnowledgeBaseView = () => {
               )}
             </>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-               <div className="card" style={{ padding: 24 }}>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 16 }}>Anleitungen & Handbücher</h3>
-                  <p style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 24 }}>
-                    Hier findest du alle wichtigen PDF-Anleitungen, Word-Vorlagen und Excel-Tabellen. 
-                    Organisiere sie in Ordnern wie "Intern" und "Extern".
-                  </p>
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+               <div style={{ padding: 24 }}>
                   <DocumentExplorer entityType="kb" entityId="00000000-0000-0000-0000-000000000000" />
                </div>
             </div>
@@ -214,6 +298,7 @@ export const KnowledgeBaseView = () => {
         </main>
       </div>
 
+      {/* Article Modal */}
       {showModal && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: 800 }}>
@@ -235,31 +320,29 @@ export const KnowledgeBaseView = () => {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder="z.B. Onboarding, Technik"
+                    placeholder="z.B. IT-Support"
+                    value={newArticle.category}
                     onChange={(e) => setNewArticle({ ...newArticle, category: e.target.value })}
                   />
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 24, padding: '24px 0 0 0' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', fontSize: 13 }}>
-                    <input
-                      type="checkbox"
-                      checked={newArticle.is_internal}
-                      onChange={(e) => setNewArticle({ ...newArticle, is_internal: e.target.checked })}
-                    />
-                    <span>Interner Artikel</span>
+                <div style={{ display: 'flex', gap: 20, alignItems: 'flex-end', height: '100%', paddingBottom: 8 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={newArticle.is_internal} onChange={e => setNewArticle({ ...newArticle, is_internal: e.target.checked })} /> Intern
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={newArticle.is_published} onChange={e => setNewArticle({ ...newArticle, is_published: e.target.checked })} /> Veröffentlicht
                   </label>
                 </div>
               </div>
-              <div style={{ marginBottom: 20 }}>
-                <label className="input-label">Inhalt (Markdown / Text) *</label>
+              <div style={{ marginBottom: 24 }}>
+                <label className="input-label">Inhalt (Markdown unterstützt)</label>
                 <textarea
                   className="input-field"
-                  rows={10}
-                  required
+                  rows={12}
                   style={{ resize: 'vertical', fontFamily: 'monospace' }}
                   value={newArticle.content}
                   onChange={(e) => setNewArticle({ ...newArticle, content: e.target.value })}
-                />
+                ></textarea>
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                 <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Abbrechen</button>
@@ -269,6 +352,53 @@ export const KnowledgeBaseView = () => {
           </div>
         </div>
       )}
+
+      {/* Folder Modal */}
+      {showFolderModal && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: 400 }}>
+            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>Neuer Ordner</h2>
+            <form onSubmit={handleCreateFolder}>
+              <div style={{ marginBottom: 20 }}>
+                <label className="input-label">Ordnername</label>
+                <input
+                  type="text"
+                  className="input-field"
+                  required
+                  autoFocus
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="z.B. Anleitungen"
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                <button type="button" className="btn-secondary" onClick={() => setShowFolderModal(false)}>Abbrechen</button>
+                <button type="submit" className="btn-primary">Ordner erstellen</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background-color: rgba(0,0,0,0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1100;
+          backdrop-filter: blur(4px);
+        }
+        .modal-content {
+          background-color: var(--color-surface);
+          padding: 32px;
+          border-radius: var(--radius-lg);
+          width: 90%;
+          box-shadow: var(--shadow-lg);
+        }
+      `}</style>
     </div>
   );
 };
