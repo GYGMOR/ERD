@@ -301,195 +301,177 @@ const AppChild = () => {
 
   const isPortalPath = location.pathname.startsWith('/portal');
 
-  if (isProcessingAuth || inProgress !== 'none') {
-    return (
-      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--color-surface)' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ width: 40, height: 40, border: '4px solid var(--color-primary)', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }}></div>
-          <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-          <p style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}>Anmeldung wird verarbeitet...</p>
+  const renderContent = () => {
+    if (isProcessingAuth || inProgress !== 'none') {
+      return (
+        <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--color-surface)' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ width: 40, height: 40, border: '4px solid var(--color-primary)', borderTopColor: 'transparent', borderRadius: '50%', margin: '0 auto 16px', animation: 'spin 1s linear infinite' }}></div>
+            <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
+            <p style={{ color: 'var(--color-text-muted)', fontWeight: 500 }}>Anmeldung wird verarbeitet...</p>
+          </div>
         </div>
+      );
+    }
+
+    if (!isAuthenticated) {
+      if (isPortalPath) {
+        return <ClientLoginView onLogin={() => setIsAuthenticated(true)} />;
+      }
+      return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
+    }
+
+    const isCustomer = currentUser?.role === 'customer' || currentUser?.role === 'client';
+
+    if (isCustomer) {
+      return (
+        <CustomerLayout>
+          <Routes>
+            <Route path="/" element={<CustomerDashboard />} />
+            <Route path="/portal" element={<CustomerDashboard />} />
+            <Route path="/portal/tickets" element={<CustomerTickets />} />
+            <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
+            <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
+            <Route path="/portal/projects" element={<CustomerProjects />} />
+            <Route path="/portal/projects/:id" element={<ProjectDetailView />} />
+            <Route path="/portal/offers" element={<CustomerOffers />} />
+            <Route path="/portal/invoices" element={<CustomerInvoices />} />
+            <Route path="/portal/contracts" element={<CustomerContracts />} />
+            <Route path="/portal/documents" element={<CustomerDocuments />} />
+            <Route path="/portal/profile" element={<CustomerProfile />} />
+            <Route path="/portal/calendar" element={<CustomerCalendar />} />
+            <Route path="*" element={<CustomerDashboard />} />
+          </Routes>
+        </CustomerLayout>
+      );
+    }
+
+    if (!isCustomer && isPortalPath) {
+       window.location.href = '/ERD/';
+       return null;
+    }
+
+    return (
+      <div className="app-container">
+        <div 
+          className={`mobile-overlay ${isMobileMenuOpen ? 'visible' : ''}`} 
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+        
+        <Sidebar 
+          isCollapsed={isSidebarCollapsed} 
+          isOpen={isMobileMenuOpen} 
+          onLogout={handleLogout} 
+          onClose={() => setIsMobileMenuOpen(false)}
+        />
+
+        <main className="main-content">
+          <header className="topbar">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <button
+                onClick={() => {
+                  if (window.innerWidth <= 768) {
+                    setIsMobileMenuOpen(!isMobileMenuOpen);
+                  } else {
+                    setIsSidebarCollapsed(!isSidebarCollapsed);
+                  }
+                }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
+                aria-label="Toggle Sidebar"
+              >
+                {window.innerWidth <= 768 ? <Menu size={20} /> : (isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />)}
+              </button>
+              <div className="search-container-desktop" style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
+                <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
+                <input
+                  type="text"
+                  placeholder="Global search..."
+                  style={{
+                    padding: '6px 12px 6px 34px', borderRadius: 'var(--radius-pill)',
+                    border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)',
+                    color: 'var(--color-text-main)', width: '100%', outline: 'none', fontSize: 13,
+                    transition: 'all 0.2s ease',
+                  }}
+                  className="search-input-premium"
+                />
+              </div>
+              <style>{`
+                @media (max-width: 640px) {
+                  .search-container-desktop { display: none !important; }
+                }
+              `}</style>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <ThemeToggle />
+              <button 
+                onClick={() => {
+                  if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                  } else {
+                    document.exitFullscreen();
+                  }
+                }}
+                style={{ color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%' }}
+                title="Vollbild"
+              >
+                {document.fullscreenElement ? <Minimize size={17} /> : <Maximize size={17} />}
+              </button>
+              <NotificationCenter />
+              <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                <div className="user-profile-text" style={{ textAlign: 'right' }}>
+                  <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
+                  <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
+                </div>
+                <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 12 }}>
+                  {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
+                </div>
+              </div>
+              <style>{`
+                @media (max-width: 480px) {
+                  .user-profile-text { display: none !important; }
+                }
+              `}</style>
+            </div>
+          </header>
+
+          <div className="content-area">
+            <Routes>
+              <Route path="/" element={<DashboardView />} />
+              <Route path="/tickets" element={<TicketsView />} />
+              <Route path="/tickets/:id" element={<TicketDetailView />} />
+              <Route path="/calendar" element={isInternal() ? <CalendarView /> : <Placeholder title="Kein Zugriff" icon={Calendar} />} />
+              <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+              <Route path="/projects/:id" element={isInternal() ? <ProjectDetailView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+              <Route path="/performance" element={hasRole(['admin', 'manager']) ? <PerformanceView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
+              <Route path="/documents" element={isInternal() ? <DocumentsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
+              <Route path="/knowledge" element={<KnowledgeBaseView />} />
+              <Route path="/customers" element={<CustomersView />} />
+              <Route path="/customers/:id" element={<CustomerDetailView />} />
+              <Route path="/contacts" element={<ContactsView />} />
+              <Route path="/leads" element={<LeadsView />} />
+              <Route path="/quotes" element={<QuotesView />} />
+              <Route path="/contracts" element={<ContractsView />} />
+              <Route path="/products" element={<ProductsView />} />
+              <Route path="/newsletter" element={<NewsletterView />} />
+              <Route path="/accounting" element={hasRole('admin', 'manager') ? <AccountingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+              <Route path="/business-card" element={isInternal() ? <BusinessCardView /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
+              <Route path="/timeline" element={isInternal() ? <CustomerTimelineView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
+              <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />
+              <Route path="/settings" element={<SettingsView />} />
+            </Routes>
+          </div>
+        </main>
       </div>
     );
-  }
-
-  if (!isAuthenticated) {
-    if (isPortalPath) {
-      return <ClientLoginView onLogin={() => setIsAuthenticated(true)} />;
-    }
-    return <GlobalLoginView onLogin={() => setIsAuthenticated(true)} />;
-  }
-
-  const isCustomer = currentUser?.role === 'customer' || currentUser?.role === 'client';
-
-  // Redirect logic: if customer tries to access internal paths, or staff tries to access portal
-  if (isCustomer && !isPortalPath) {
-    // Should be in portal
-    return (
-      <CustomerLayout>
-        <Routes>
-          <Route path="/" element={<CustomerDashboard />} />
-          <Route path="/portal" element={<CustomerDashboard />} />
-          <Route path="/portal/tickets" element={<CustomerTickets />} />
-          <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
-          <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
-          <Route path="/portal/projects" element={<CustomerProjects />} />
-          <Route path="/portal/projects/:id" element={<ProjectDetailView />} />
-          <Route path="/portal/offers" element={<CustomerOffers />} />
-          <Route path="/portal/invoices" element={<CustomerInvoices />} />
-          <Route path="/portal/contracts" element={<CustomerContracts />} />
-          <Route path="/portal/documents" element={<CustomerDocuments />} />
-          <Route path="/portal/profile" element={<CustomerProfile />} />
-          <Route path="/portal/calendar" element={<CustomerCalendar />} />
-          <Route path="*" element={<CustomerDashboard />} />
-        </Routes>
-      </CustomerLayout>
-    );
-  }
-
-  if (!isCustomer && isPortalPath) {
-     // Staff member in portal path? Show error or redirect to dashboard
-     window.location.href = '/ERD/';
-     return null;
-  }
-
-  if (isCustomer) {
-    return (
-      <CustomerLayout>
-        <Routes>
-          <Route path="/" element={<CustomerDashboard />} />
-          <Route path="/portal" element={<CustomerDashboard />} />
-          <Route path="/portal/tickets" element={<CustomerTickets />} />
-          <Route path="/portal/tickets/new" element={<CustomerNewTicket />} />
-          <Route path="/portal/tickets/:id" element={<CustomerTicketDetail />} />
-          <Route path="/portal/projects" element={<CustomerProjects />} />
-          <Route path="/portal/projects/:id" element={<ProjectDetailView />} />
-          <Route path="/portal/offers" element={<CustomerOffers />} />
-          <Route path="/portal/invoices" element={<CustomerInvoices />} />
-          <Route path="/portal/contracts" element={<CustomerContracts />} />
-          <Route path="/portal/documents" element={<CustomerDocuments />} />
-          <Route path="/portal/profile" element={<CustomerProfile />} />
-          <Route path="/portal/calendar" element={<CustomerCalendar />} />
-          <Route path="*" element={<CustomerDashboard />} />
-        </Routes>
-      </CustomerLayout>
-    );
-  }
+  };
 
   return (
-    <div className="app-container">
-      <div 
-        className={`mobile-overlay ${isMobileMenuOpen ? 'visible' : ''}`} 
-        onClick={() => setIsMobileMenuOpen(false)}
-      />
-      
-      <Sidebar 
-        isCollapsed={isSidebarCollapsed} 
-        isOpen={isMobileMenuOpen} 
-        onLogout={handleLogout} 
-        onClose={() => setIsMobileMenuOpen(false)}
-      />
-
-      <main className="main-content">
-        <header className="topbar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => {
-                if (window.innerWidth <= 768) {
-                  setIsMobileMenuOpen(!isMobileMenuOpen);
-                } else {
-                  setIsSidebarCollapsed(!isSidebarCollapsed);
-                }
-              }}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
-              aria-label="Toggle Sidebar"
-            >
-              {window.innerWidth <= 768 ? <Menu size={20} /> : (isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />)}
-            </button>
-            <div className="search-container-desktop" style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
-              <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-              <input
-                type="text"
-                placeholder="Global search..."
-                style={{
-                  padding: '6px 12px 6px 34px', borderRadius: 'var(--radius-pill)',
-                  border: '1px solid var(--color-border)', backgroundColor: 'var(--color-surface-hover)',
-                  color: 'var(--color-text-main)', width: '100%', outline: 'none', fontSize: 13,
-                  transition: 'all 0.2s ease',
-                }}
-                className="search-input-premium"
-              />
-            </div>
-            <style>{`
-              @media (max-width: 640px) {
-                .search-container-desktop { display: none !important; }
-              }
-            `}</style>
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <ThemeToggle />
-            <button 
-              onClick={() => {
-                if (!document.fullscreenElement) {
-                  document.documentElement.requestFullscreen();
-                } else {
-                  document.exitFullscreen();
-                }
-              }}
-              style={{ color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%' }}
-              title="Vollbild"
-            >
-              {document.fullscreenElement ? <Minimize size={17} /> : <Maximize size={17} />}
-            </button>
-            <NotificationCenter />
-            <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <div className="user-profile-text" style={{ textAlign: 'right' }}>
-                <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
-                <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
-              </div>
-              <div style={{ width: 32, height: 32, borderRadius: '50%', backgroundColor: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 600, fontSize: 12 }}>
-                {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
-              </div>
-            </div>
-            <style>{`
-              @media (max-width: 480px) {
-                .user-profile-text { display: none !important; }
-              }
-            `}</style>
-          </div>
-        </header>
-
-        <div className="content-area">
-          <Routes>
-            <Route path="/" element={<DashboardView />} />
-            <Route path="/tickets" element={<TicketsView />} />
-            <Route path="/tickets/:id" element={<TicketDetailView />} />
-            <Route path="/calendar" element={isInternal() ? <CalendarView /> : <Placeholder title="Kein Zugriff" icon={Calendar} />} />
-            <Route path="/projects" element={isInternal() ? <ProjectsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
-            <Route path="/projects/:id" element={isInternal() ? <ProjectDetailView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
-            <Route path="/performance" element={hasRole(['admin', 'manager']) ? <PerformanceView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
-            <Route path="/documents" element={isInternal() ? <DocumentsView /> : <Placeholder title="Kein Zugriff" icon={FolderOpen} />} />
-            <Route path="/knowledge" element={<KnowledgeBaseView />} />
-            <Route path="/customers" element={<CustomersView />} />
-            <Route path="/customers/:id" element={<CustomerDetailView />} />
-            <Route path="/contacts" element={<ContactsView />} />
-            <Route path="/leads" element={<LeadsView />} />
-            <Route path="/quotes" element={<QuotesView />} />
-            <Route path="/contracts" element={<ContractsView />} />
-            <Route path="/products" element={<ProductsView />} />
-            <Route path="/newsletter" element={<NewsletterView />} />
-            <Route path="/accounting" element={hasRole('admin', 'manager') ? <AccountingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
-            <Route path="/business-card" element={isInternal() ? <BusinessCardView /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
-            <Route path="/timeline" element={isInternal() ? <CustomerTimelineView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
-            <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />
-            <Route path="/settings" element={<SettingsView />} />
-          </Routes>
-        </div>
-      </main>
+    <>
+      {renderContent()}
       <VersionTag />
-    </div>
+    </>
   );
 };
 
