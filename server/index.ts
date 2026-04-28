@@ -444,16 +444,42 @@ app.get('/api/invoices/export/csv', async (req: express.Request, res: express.Re
 });
 
 // Dashboard Metrics Route
-app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Response) => {
+// Dashboard Metrics Route (Consolidated)
+app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    // Basic multi-query for MVP dashboard stats
-    const openTicketsResult = await pool.query(`SELECT COUNT(*) as count FROM tickets WHERE status NOT IN ('closed', 'resolved')`);
-    const criticalTicketsResult = await pool.query(`SELECT COUNT(*) as count FROM tickets WHERE status NOT IN ('closed', 'resolved') AND priority = 'critical'`);
-    const revMtdResult = await pool.query(`SELECT COALESCE(SUM(amount), 0) as total FROM invoices WHERE issue_date >= date_trunc('month', CURRENT_DATE)`);
-    const activeProjectsResult = await pool.query(`SELECT COUNT(*) as count FROM projects WHERE status = 'in_progress'`);
-    
-    // Ticket status distribution for pie chart
-    const ticketDistResult = await pool.query(`SELECT status, COUNT(*) as count FROM tickets GROUP BY status`);
+    const { tenant_id } = req.user!;
+
+    // 1. Tickets (Open & Critical)
+    const tickets = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status != 'closed' AND status != 'resolved') as open,
+        COUNT(*) FILTER (WHERE priority = 'critical' AND status != 'closed') as critical
+      FROM tickets WHERE tenant_id = $1
+    `, [tenant_id]);
+
+    // 2. Leads (New in last 7 days)
+    const leads = await pool.query(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+    `, [tenant_id]);
+
+    // 3. Projects (Active)
+    const projects = await pool.query(`
+      SELECT COUNT(*) as total FROM projects 
+      WHERE tenant_id = $1 AND status != 'completed' AND status != 'cancelled'
+    `, [tenant_id]);
+
+    // 4. Finance (Revenue of current month & Overdue invoices)
+    const finance = await pool.query(`
+      SELECT 
+        SUM(amount) FILTER (WHERE issue_date >= DATE_TRUNC('month', CURRENT_DATE)) as month_revenue,
+        COUNT(*) FILTER (WHERE status = 'overdue' OR (status = 'pending' AND due_date < CURRENT_DATE)) as overdue_count
+      FROM invoices WHERE tenant_id = $1
+    `, [tenant_id]);
+
+    // 5. Ticket status distribution for pie chart
+    const ticketDistResult = await pool.query(`SELECT status, COUNT(*) as count FROM tickets WHERE tenant_id = $1 GROUP BY status`, [tenant_id]);
     const ticketData = ticketDistResult.rows.map((row: { status: string, count: string }) => {
       let color = 'var(--color-info)';
       let name = row.status;
@@ -465,22 +491,24 @@ app.get('/api/dashboard/metrics', async (req: express.Request, res: express.Resp
       return { name, value: parseInt(row.count, 10), color };
     });
 
-    res.status(200).json({
+    res.json({
       success: true,
       metrics: {
-        openTickets: parseInt(openTicketsResult.rows[0].count, 10),
-        criticalTickets: parseInt(criticalTicketsResult.rows[0].count, 10),
-        revenueMtd: parseFloat(revMtdResult.rows[0].total),
-        activeProjects: parseInt(activeProjectsResult.rows[0].count, 10),
-        satisfaction: 100 // Hardcoded for MVP
+        openTickets: parseInt(tickets.rows[0].open || '0'),
+        criticalTickets: parseInt(tickets.rows[0].critical || '0'),
+        newLeads: parseInt(leads.rows[0].total || '0'),
+        activeProjects: parseInt(projects.rows[0].total || '0'),
+        monthRevenue: parseFloat(finance.rows[0].month_revenue || '0'),
+        overdueInvoices: parseInt(finance.rows[0].overdue_count || '0'),
+        satisfaction: 100
       },
       charts: {
         ticketData: ticketData.length ? ticketData : [{ name: 'Keine Tickets', value: 1, color: 'var(--color-border)' }]
       }
     });
   } catch (error) {
-    console.error('Dashboard error:', error);
-    res.status(500).json({ success: false, error: 'Server error loading dashboard metrics' });
+    console.error('Dashboard Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });
 
@@ -1203,25 +1231,25 @@ app.delete('/api/files/:id', authenticateToken, async (req: AuthenticatedRequest
 
 // ─── Performance Reports ─────────────────────────────────────────────────────
 app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
-  const { tenant_id } = req.user!;
-  const { months } = req.query;
-  const period = parseInt(months as string) || 3;
-
   try {
-    const result = await pool.query(`
+    const { tenant_id } = req.user!;
+    const { months = '3' } = req.query;
+    const interval = `${months} months`;
+
+    const performance = await pool.query(`
       SELECT 
         u.id, u.first_name, u.last_name,
-        (SELECT COUNT(*) FROM tickets t WHERE t.assignee_id = u.id AND t.status IN ('closed', 'resolved') AND t.updated_at >= NOW() - interval '${period} months') as resolved_tickets,
-        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - interval '${period} months') as completed_projects
+        (SELECT COUNT(*) FROM tickets t WHERE t.assignee_id = u.id AND t.status IN ('closed', 'resolved') AND t.updated_at >= NOW() - INTERVAL '${interval}') as resolved_tickets,
+        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - INTERVAL '${interval}') as completed_projects
       FROM users u
-      WHERE u.tenant_id = $1 AND u.role IN ('admin', 'manager', 'employee')
+      WHERE u.tenant_id = $1 AND u.is_active = true AND u.role != 'customer'
       ORDER BY resolved_tickets DESC, completed_projects DESC
     `, [tenant_id]);
 
-    res.json({ success: true, data: result.rows });
+    res.json({ success: true, data: performance.rows });
   } catch (error) {
-    console.error('Performance report error:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
+    console.error('Performance Report Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
   }
 });
 
@@ -1248,27 +1276,7 @@ app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manag
   }
 });
 
-app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id } = req.user!;
-    const tickets = await pool.query(`SELECT COUNT(*) FILTER (WHERE status != 'closed') as open, COUNT(*) FILTER (WHERE priority = 'critical' AND status != 'closed') as critical FROM tickets WHERE tenant_id = $1`, [tenant_id]);
-    const projects = await pool.query(`SELECT COUNT(*) as total FROM projects WHERE tenant_id = $1 AND status != 'completed'`, [tenant_id]);
-    const finance = await pool.query(`SELECT SUM(amount) FILTER (WHERE issue_date >= DATE_TRUNC('month', CURRENT_DATE)) as month_revenue FROM invoices WHERE tenant_id = $1`, [tenant_id]);
 
-    res.json({
-      success: true,
-      metrics: {
-        openTickets: parseInt(tickets.rows[0].open || '0'),
-        criticalTickets: parseInt(tickets.rows[0].critical || '0'),
-        activeProjects: parseInt(projects.rows[0].total || '0'),
-        monthRevenue: parseFloat(finance.rows[0].month_revenue || '0')
-      }
-    });
-  } catch (error) {
-    console.error('Dashboard Metrics Error:', error);
-    res.status(500).json({ success: false, error: 'Server Error' });
-  }
-});
 
 // ─── Settings Routes ─────────────────────────────────────────────────────────
 app.get('/api/settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
@@ -1443,8 +1451,9 @@ app.post('/api/auth/reset-password', async (req: express.Request, res: express.R
   }
 });
 
-app.listen(port, async () => {
-  console.log(`Server running on port ${port}`);
+
+// Database migrations moved to startup logic
+const runMigrations = async () => {
   try {
     await pool.query(`
       ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(10),
@@ -1454,160 +1463,10 @@ app.listen(port, async () => {
   } catch (err) {
     console.error('Error updating schema:', err);
   }
-});
+};
+runMigrations();
 
-app.post('/api/auth/login', async (req: express.Request, res: express.Response) => {
-  const { email, password, bot_check } = req.body;
-  if (bot_check !== 'expected_value') {
-    return res.status(403).json({ success: false, error: 'Bot verification failed' });
-  }
-  // ... rest of login logic
-});
 
-app.post('/api/settings/test-db', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
-  let { host, port, database, user, password, ssl } = req.body;
-  const { tenant_id } = req.user!;
-
-  // If password is masked, try to load it from the DB
-  if (password === '********') {
-    const settings = await getSystemSettings(tenant_id, 'system');
-    host = host || settings.host;
-    port = port || settings.port;
-    database = database || settings.database;
-    user = user || settings.user;
-    password = settings.password;
-    ssl = ssl !== undefined ? ssl : settings.ssl;
-  }
-  
-  const testPool = new Pool({
-    host,
-    port: port ? parseInt(port) : 5432,
-    database,
-    user,
-    password,
-    ssl: ssl ? { rejectUnauthorized: false } : false,
-    connectionTimeoutMillis: 5000
-  });
-
-  try {
-    const client = await testPool.connect();
-    const result = await client.query('SELECT version()');
-    client.release();
-    await testPool.end();
-    res.json({ success: true, message: 'Verbindung erfolgreich!', version: result.rows[0].version });
-  } catch (error: any) {
-    if (testPool) await testPool.end();
-    res.status(500).json({ success: false, error: 'Server error: ' + error.message });
-  }
-});
-
-app.post('/api/settings/test-email', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
-  let { provider, smtpHost, smtpPort, smtpUser, smtpPass, senderEmail, recipientEmail, clientId, clientSecret, tenantId } = req.body;
-  const { tenant_id: userTenantId } = req.user!;
-
-  if (smtpPass === '********' || clientSecret === '********') {
-    const settings = await getSystemSettings(userTenantId, 'email');
-    smtpPass = smtpPass === '********' ? settings.smtpPass : smtpPass;
-    clientSecret = clientSecret === '********' ? settings.clientSecret : clientSecret;
-  }
-
-  if (provider === 'm365') {
-    if (!clientId || !clientSecret) return res.status(400).json({ success: false, error: 'Microsoft 365 Client ID und Secret benötigt' });
-    // Simulate OAuth2 check
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    return res.json({ success: true, message: 'Microsoft 365 Authentifizierung erfolgreich (Simuliert)' });
-  }
-  
-  if (!smtpHost || !smtpPort || !recipientEmail) {
-    return res.status(400).json({ success: false, error: 'Fehlende Konfigurationsdaten' });
-  }
-
-  try {
-    console.log(`Simulating test email to ${recipientEmail} via ${smtpHost}:${smtpPort}`);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    res.json({ success: true, message: `Test-E-Mail erfolgreich an ${recipientEmail} versendet!` });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post('/api/users', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
-  const { first_name, last_name, email, role, password, tenant_id } = req.body;
-  if (!email || !password || !first_name || !last_name) {
-    return res.status(400).json({ success: false, error: 'All fields are required' });
-  }
-
-  try {
-    // Check if user already exists
-    const check = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
-    if (check.rows.length > 0) {
-      return res.status(400).json({ success: false, error: 'User with this email already exists' });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const password_hash = await bcrypt.hash(password, salt);
-
-    const result = await pool.query(
-      `INSERT INTO users (tenant_id, first_name, last_name, email, role, password_hash, is_active)
-       VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id, email, role`,
-      [tenant_id, first_name, last_name, email, role || 'employee', password_hash]
-    );
-
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error: any) {
-    console.error('Error creating user:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-
-app.patch('/api/users/:id', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
-  const { id } = req.params;
-  const { is_active, role, first_name, last_name } = req.body;
-  try {
-    const result = await pool.query(
-      `UPDATE users SET 
-        is_active = COALESCE($1, is_active),
-        role = COALESCE($2, role),
-        first_name = COALESCE($3, first_name),
-        last_name = COALESCE($4, last_name),
-        updated_at = NOW()
-       WHERE id = $5 RETURNING id, email, role, is_active`,
-      [is_active, role, first_name, last_name, id]
-    );
-
-    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
-    res.json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Error updating user:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-
-app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id, role } = req.user!;
-    let query = 'SELECT id, first_name, last_name, email, role, is_active, created_at FROM users WHERE (tenant_id = $1 OR tenant_id IS NULL)';
-    const params: any[] = [tenant_id];
-
-    const includeCustomers = req.query.includeCustomers === 'true';
-    const internalRoles = ['admin', 'manager', 'employee'];
-    
-    if (internalRoles.includes(role)) {
-        if (!includeCustomers) {
-            query += " AND role IN ('admin', 'manager', 'employee')";
-        }
-    } else {
-        query += " AND role IN ('admin', 'manager', 'employee')";
-    }
-
-    query += ' ORDER BY role, last_name';
-    
-    const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
-  } catch (error) {
-    res.status(500).json({ success: false, error: 'Failed to fetch users' });
-  }
-});
 
 // ─── Calendar Routes ─────────────────────────────────────────────────────────
 
@@ -2250,229 +2109,7 @@ app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manag
   }
 });
 
-app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id } = req.user!;
 
-    // 1. Tickets (Open & Critical)
-    const tickets = await pool.query(`
-      SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status != 'closed' AND status != 'resolved') as open,
-        COUNT(*) FILTER (WHERE priority = 'critical' AND status != 'closed') as critical
-      FROM tickets WHERE tenant_id = $1
-    `, [tenant_id]);
-
-    // 2. Leads (New in last 7 days)
-    const leads = await pool.query(`
-      SELECT COUNT(*) as total FROM leads 
-      WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
-    `, [tenant_id]);
-
-    // 3. Projects (Active)
-    const projects = await pool.query(`
-      SELECT COUNT(*) as total FROM projects 
-      WHERE tenant_id = $1 AND status != 'completed' AND status != 'cancelled'
-    `, [tenant_id]);
-
-    // 4. Finance (Revenue of current month & Overdue invoices)
-    const finance = await pool.query(`
-      SELECT 
-        SUM(amount) FILTER (WHERE issue_date >= DATE_TRUNC('month', CURRENT_DATE)) as month_revenue,
-        COUNT(*) FILTER (WHERE status = 'overdue' OR (status = 'pending' AND due_date < CURRENT_DATE)) as overdue_count
-      FROM invoices WHERE tenant_id = $1
-    `, [tenant_id]);
-
-    res.json({
-      success: true,
-      metrics: {
-        openTickets: parseInt(tickets.rows[0].open || '0'),
-        criticalTickets: parseInt(tickets.rows[0].critical || '0'),
-        newLeads: parseInt(leads.rows[0].total || '0'),
-        activeProjects: parseInt(projects.rows[0].total || '0'),
-        monthRevenue: parseFloat(finance.rows[0].month_revenue || '0'),
-        overdueInvoices: parseInt(finance.rows[0].overdue_count || '0')
-      }
-    });
-  } catch (error) {
-    console.error('Dashboard Metrics Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id } = req.user!;
-    const { months = '3' } = req.query;
-    const interval = `${months} months`;
-
-    const performance = await pool.query(`
-      SELECT 
-        u.id, u.first_name, u.last_name,
-        (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.id AND t.status = 'resolved' AND t.updated_at >= NOW() - INTERVAL '${interval}') as resolved_tickets,
-        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - INTERVAL '${interval}') as completed_projects
-      FROM users u
-      WHERE u.tenant_id = $1 AND u.is_active = true AND u.role != 'customer'
-      ORDER BY resolved_tickets DESC, completed_projects DESC
-    `, [tenant_id]);
-
-    res.json({ success: true, data: performance.rows });
-  } catch (error) {
-    console.error('Performance Report Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-// ─── File Management Routes ───────────────────────────────────────────────────
-
-app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { entity_type, entity_id, parent_id } = req.query;
-  const { tenant_id } = req.user!;
-
-  try {
-    let query = 'SELECT * FROM files WHERE tenant_id = $1';
-    const params: any[] = [tenant_id];
-
-    if (entity_type) {
-      params.push(entity_type);
-      query += ` AND entity_type = $${params.length}`;
-    }
-    if (entity_id) {
-      params.push(entity_id);
-      query += ` AND entity_id = $${params.length}`;
-    }
-    
-    if (parent_id === 'null' || !parent_id) {
-      query += ' AND parent_id IS NULL';
-    } else {
-      params.push(parent_id);
-      query += ` AND parent_id = $${params.length}`;
-    }
-
-    query += ' ORDER BY is_folder DESC, file_name ASC';
-
-    const result = await pool.query(query, params);
-    res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error('Fetch files error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { name, entity_type, entity_id, parent_id } = req.body;
-  const { tenant_id, id: userId } = req.user!;
-
-  try {
-    const result = await pool.query(
-      `INSERT INTO files (tenant_id, entity_type, entity_id, file_name, file_type, is_folder, parent_id, uploaded_by)
-       VALUES ($1, $2, $3, $4, 'folder', true, $5, $6) RETURNING *`,
-      [tenant_id, entity_type, entity_id, name, parent_id || null, userId]
-    );
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Create folder error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.post('/api/files/upload', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { file_name, file_type, file_size, file_content, entity_type, entity_id, parent_id } = req.body;
-  const { tenant_id, id: userId } = req.user!;
-
-  try {
-    // In a real app, we'd upload to S3 here. For now, we store metadata and simulate success.
-    // If file_content is provided, we could store it in a blob or local storage, 
-    // but for this MVP we'll just log the "upload".
-    
-    const result = await pool.query(
-      `INSERT INTO files (tenant_id, entity_type, entity_id, file_name, file_type, file_size, file_path, is_folder, parent_id, uploaded_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8, $9) RETURNING *`,
-      [tenant_id, entity_type, entity_id, file_name, file_type, file_size, 'SIMULATED_STORAGE_PATH', parent_id || null, userId]
-    );
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Upload file error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.delete('/api/files/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { id } = req.params;
-  const { tenant_id } = req.user!;
-
-  try {
-    const result = await pool.query('DELETE FROM files WHERE id = $1 AND tenant_id = $2 RETURNING *', [id, tenant_id]);
-    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'File not found' });
-    res.json({ success: true, message: 'File deleted' });
-  } catch (error) {
-    console.error('Delete file error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-// ─── Webhooks (External Integration) ──────────────────────────────────────────
-
-app.post('/api/webhooks/tickets', async (req: express.Request, res: express.Response) => {
-  const apiKey = req.headers['x-api-key'] || req.query.key;
-  const { sender_email, subject, content, priority, metadata } = req.body;
-
-  if (!apiKey) return res.status(401).json({ success: false, error: 'API Key required' });
-  if (!sender_email || !subject || !content) {
-    return res.status(400).json({ success: false, error: 'Missing required fields: sender_email, subject, content' });
-  }
-
-  try {
-    // 1. Verify API Key
-    const keyResult = await pool.query('SELECT tenant_id FROM api_keys WHERE api_key = $1', [apiKey]);
-    if (keyResult.rows.length === 0) return res.status(403).json({ success: false, error: 'Invalid API Key' });
-    
-    const tenant_id = keyResult.rows[0].tenant_id;
-
-    // 2. Find or create user for sender_email
-    let userResult = await pool.query('SELECT id FROM users WHERE email = $1', [sender_email]);
-    let userId;
-    
-    if (userResult.rows.length > 0) {
-      userId = userResult.rows[0].id;
-    } else {
-      // Auto-create external contact/user
-      const newUser = await pool.query(
-        `INSERT INTO users (tenant_id, email, password_hash, role, first_name, last_name, is_active)
-         VALUES ($1, $2, 'EXTERNAL_NO_LOGIN', 'customer', 'External', 'User', true) RETURNING id`,
-        [tenant_id, sender_email]
-      );
-      userId = newUser.rows[0].id;
-    }
-
-    // 3. Create Ticket
-    const ticketResult = await pool.query(
-      `INSERT INTO tickets (tenant_id, title, description, status, priority, type, customer_id, source_metadata)
-       VALUES ($1, $2, $3, 'new', $4, 'support', $5, $6) RETURNING *`,
-      [tenant_id, subject, content, priority || 'medium', userId, JSON.stringify(metadata || {})]
-    );
-
-    // 4. Update API Key usage
-    await pool.query('UPDATE api_keys SET last_used_at = NOW() WHERE api_key = $1', [apiKey]);
-
-    // 5. Notify Admins
-    await createNotification({
-      tenant_id,
-      target_role: 'admin',
-      type: 'ticket',
-      entity_id: ticketResult.rows[0].id,
-      title: 'Neues Webhook-Ticket',
-      message: `Ein Ticket von "${sender_email}" wurde via API empfangen.`,
-      priority: priority === 'critical' ? 'critical' : 'normal',
-      link: `/tickets/${ticketResult.rows[0].id}`
-    });
-
-    res.status(201).json({ success: true, ticket_id: ticketResult.rows[0].id });
-  } catch (error) {
-    console.error('Webhook Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
 
 // For any other request, serve the index.html (Client Side Routing)
 app.get(/.*/, (req, res) => {
