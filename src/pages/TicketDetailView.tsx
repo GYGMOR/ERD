@@ -227,6 +227,9 @@ export const TicketDetailView = () => {
         setCommentBody('');
         setIsInternal(false);
       } else { setCommentError(res.error || 'Fehler beim Senden.'); }
+    } catch { setCommentError('Netzwerkfehler.'); } finally { setSubmittingComment(false); }
+  };
+
   const handleSignatureSave = async (dataUrl: string) => {
     try {
       const res = await fetch(`/api/tickets/${id}/signature`, {
