@@ -150,6 +150,11 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_type VARCHAR(50)').catch(() => {});
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_id UUID').catch(() => {});
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+
+    // Migrations for existing notifications table
+    pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_role VARCHAR(50)').catch(() => {});
 
     // Webhook API Keys table
     pool.query(`
