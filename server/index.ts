@@ -131,11 +131,11 @@ pool.query('SELECT NOW()', (err: Error | null) => {
       CREATE TABLE IF NOT EXISTS files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL,
-        entity_type VARCHAR(50) NOT NULL, -- 'ticket', 'project', 'contract', 'invoice', 'general'
-        entity_id UUID, -- Optional if it's a general file
+        entity_type VARCHAR(50) NOT NULL,
+        entity_id UUID,
         file_name VARCHAR(255) NOT NULL,
-        file_path TEXT, -- Null for folders
-        file_type VARCHAR(100), -- 'folder', 'pdf', 'xlsx', 'docx', etc.
+        file_path TEXT,
+        file_type VARCHAR(100),
         file_size INTEGER,
         is_folder BOOLEAN DEFAULT false,
         parent_id UUID REFERENCES files(id) ON DELETE CASCADE,
@@ -143,6 +143,13 @@ pool.query('SELECT NOW()', (err: Error | null) => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `).catch(err => console.error('Error creating files table:', err));
+
+    // Migrations for existing files table
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES files(id) ON DELETE CASCADE').catch(() => {});
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_type VARCHAR(50)').catch(() => {});
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_id UUID').catch(() => {});
+    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
 
     // Webhook API Keys table
     pool.query(`
