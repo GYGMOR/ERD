@@ -1719,7 +1719,7 @@ app.post('/api/tickets/:id/messages', authenticateToken, authorizeRole('admin', 
 });
 
 // For any other request, serve the index.html (Client Side Routing)
-app.get('/:any*', (req, res) => {
+app.get(/.*/, (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
