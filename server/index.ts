@@ -151,6 +151,7 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_id UUID').catch(() => {});
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
     pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    pool.query('ALTER TABLE files ALTER COLUMN file_path DROP NOT NULL').catch(() => {});
 
     // Migrations for existing notifications table
     pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
