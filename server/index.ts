@@ -1260,17 +1260,45 @@ app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'm
     const { months = '3' } = req.query;
     const interval = `${months} months`;
 
+    // 1. User Productivity Ranking
     const performance = await pool.query(`
       SELECT 
-        u.id, u.first_name, u.last_name,
+        u.id, u.first_name, u.last_name, u.email,
         (SELECT COUNT(*) FROM tickets t WHERE t.assignee_id = u.id AND t.status IN ('closed', 'resolved') AND t.updated_at >= NOW() - INTERVAL '${interval}') as resolved_tickets,
-        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - INTERVAL '${interval}') as completed_projects
+        (SELECT COUNT(*) FROM projects p WHERE p.assigned_to = u.id AND p.status = 'completed' AND p.updated_at >= NOW() - INTERVAL '${interval}') as completed_projects,
+        (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (updated_at - created_at))/3600)::numeric, 1) FROM tickets t WHERE t.assignee_id = u.id AND t.status IN ('closed', 'resolved') AND t.updated_at >= NOW() - INTERVAL '${interval}') as avg_resolution_hours
       FROM users u
       WHERE u.tenant_id = $1 AND u.is_active = true AND u.role != 'customer'
       ORDER BY resolved_tickets DESC, completed_projects DESC
     `, [tenant_id]);
 
-    res.json({ success: true, data: performance.rows });
+    // 2. Ticket Status Distribution for Chart
+    const statusStats = await pool.query(`
+      SELECT status, COUNT(*) as count 
+      FROM tickets 
+      WHERE tenant_id = $1 AND updated_at >= NOW() - INTERVAL '${interval}'
+      GROUP BY status
+    `, [tenant_id]);
+
+    // 3. Monthly Trend
+    const trend = await pool.query(`
+      SELECT 
+        TO_CHAR(updated_at, 'YYYY-MM') as month,
+        COUNT(*) as count
+      FROM tickets
+      WHERE tenant_id = $1 AND status IN ('closed', 'resolved') AND updated_at >= NOW() - INTERVAL '12 months'
+      GROUP BY TO_CHAR(updated_at, 'YYYY-MM')
+      ORDER BY month ASC
+    `, [tenant_id]);
+
+    res.json({ 
+      success: true, 
+      data: {
+        ranking: performance.rows,
+        statusDistribution: statusStats.rows,
+        trend: trend.rows
+      }
+    });
   } catch (error) {
     console.error('Performance Report Error:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
