@@ -29,19 +29,24 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchItems = async () => {
     try {
       setLoading(true);
+      setError(null);
       const res = await fetch(`/api/files?entity_type=${entityType}&entity_id=${entityId}&parent_id=${currentFolderId || 'null'}`, {
         headers: { 'Authorization': `Bearer ${getToken()}` }
       });
       const data = await res.json();
       if (data.success) {
         setItems(data.data);
+      } else {
+        setError(data.error || 'Fehler beim Laden der Dateien');
       }
     } catch (err) {
       console.error('Failed to fetch files', err);
+      setError('Netzwerkfehler beim Laden der Dateien');
     } finally {
       setLoading(false);
     }
@@ -55,6 +60,7 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
     e.preventDefault();
     if (!newFolderName.trim()) return;
     try {
+      setError(null);
       const res = await fetch('/api/files/folders', {
         method: 'POST',
         headers: { 
@@ -73,9 +79,12 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
         setItems(prev => [data.data, ...prev].sort((a, b) => b.is_folder ? 1 : -1));
         setNewFolderName('');
         setShowNewFolderModal(false);
+      } else {
+        setError(data.error || 'Fehler beim Erstellen des Ordners');
       }
     } catch (err) {
       console.error(err);
+      setError('Netzwerkfehler beim Erstellen des Ordners');
     }
   };
 
@@ -84,6 +93,7 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
     if (!file) return;
 
     setUploading(true);
+    setError(null);
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -101,9 +111,12 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
       const data = await res.json();
       if (data.success) {
         setItems(prev => [data.data, ...prev].sort((a, b) => b.is_folder ? 1 : -1));
+      } else {
+        setError(data.error || 'Fehler beim Upload');
       }
     } catch (err) {
       console.error(err);
+      setError('Netzwerkfehler beim Upload');
     } finally {
       setUploading(false);
     }
@@ -206,6 +219,13 @@ export const DocumentExplorer = ({ entityType, entityId }: DocumentExplorerProps
           </label>
         </div>
       </div>
+
+      {error && (
+        <div style={{ padding: '8px 16px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', borderRadius: 'var(--radius-md)', color: '#b91c1c', fontSize: 13, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>{error}</span>
+          <button onClick={() => setError(null)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontWeight: 700 }}>✕</button>
+        </div>
+      )}
 
       {/* Explorer Grid/List */}
       <div className="card" style={{ padding: 0, minHeight: 400 }}>
