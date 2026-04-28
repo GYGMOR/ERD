@@ -33,7 +33,7 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@hed-it.ch # <--- Deine Login-Mail für pgAdmin
       PGADMIN_DEFAULT_PASSWORD: admin # <--- Dein Login-Passwort für pgAdmin
     ports:
-      - "8080:80" # pgAdmin ist dann über http://DEINE-SERVER-IP:8080 erreichbar
+      - "5050:80" # pgAdmin ist dann über http://DEINE-SERVER-IP:5050 erreichbar
     networks:
       - web
     depends_on:
