@@ -212,23 +212,7 @@ const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.Element
   </div>
 );
 
-// ─── Version Tag ─────────────────────────────────────────────────────────────
-const VersionTag = () => (
-  <div style={{
-    position: 'fixed',
-    bottom: '8px',
-    right: '12px',
-    fontSize: '10px',
-    color: 'var(--color-text-muted)',
-    opacity: 0.5,
-    zIndex: 9999,
-    pointerEvents: 'none',
-    fontWeight: 500,
-    letterSpacing: '0.05em'
-  }}>
-    v1.5.1
-  </div>
-);
+
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 // ─── Version Tag ──────────────────────────────────────────────────────────────
