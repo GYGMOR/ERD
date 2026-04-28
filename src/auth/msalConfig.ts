@@ -1,9 +1,7 @@
 import { LogLevel, type Configuration } from "@azure/msal-browser";
 
 const isProd = import.meta.env.PROD;
-const redirectUri = isProd 
-  ? "https://gygmor.github.io/ERD/" 
-  : window.location.origin + "/";
+const redirectUri = window.location.origin + "/";
 
 export const msalConfig: Configuration = {
     auth: {
