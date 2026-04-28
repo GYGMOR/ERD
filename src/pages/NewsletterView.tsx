@@ -90,7 +90,7 @@ export const NewsletterView = () => {
           </div>
           <div>
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Abonnenten</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>1,284</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>0</div>
           </div>
         </div>
         <div className="card" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -99,7 +99,7 @@ export const NewsletterView = () => {
           </div>
           <div>
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Gesendet (MTD)</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>8,450</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>0</div>
           </div>
         </div>
         <div className="card" style={{ padding: 16, display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -108,7 +108,7 @@ export const NewsletterView = () => {
           </div>
           <div>
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Öffnungsrate</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>24.2%</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>0.0%</div>
           </div>
         </div>
       </div>

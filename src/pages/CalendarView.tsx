@@ -171,6 +171,72 @@ export const CalendarView = () => {
     } catch (e) { setSaveStatus({ type: 'error', msg: 'Fehler' }); }
   };
 
+  const weekDays = useMemo(() => {
+    const start = new Date(currentDate);
+    const day = start.getDay();
+    const diff = start.getDate() - (day === 0 ? 6 : day - 1); // Adjust for Monday start
+    start.setDate(diff);
+    
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+  }, [currentDate]);
+
+  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+  const TimeGrid = ({ dates }: { dates: Date[] }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: `60px repeat(${dates.length}, 1fr)`, backgroundColor: 'var(--color-surface-hover)', borderBottom: '1px solid var(--color-border)' }}>
+        <div style={{ padding: '12px' }}></div>
+        {dates.map((d, i) => (
+          <div key={i} style={{ padding: '12px', textAlign: 'center', borderLeft: '1px solid var(--color-border)' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{DAYS_DE[d.getDay() === 0 ? 6 : d.getDay() - 1]}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: d.toDateString() === new Date().toDateString() ? 'var(--color-primary)' : 'inherit' }}>{d.getDate()}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'grid', gridTemplateColumns: `60px repeat(${dates.length}, 1fr)` }}>
+        {/* Time Labels */}
+        <div style={{ display: 'grid', gridTemplateRows: 'repeat(24, 60px)' }}>
+          {HOURS.map(h => (
+            <div key={h} style={{ height: 60, padding: '8px', fontSize: 10, textAlign: 'right', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}>
+              {h}:00
+            </div>
+          ))}
+        </div>
+        {/* Columns */}
+        {dates.map((date, colIdx) => (
+          <div key={colIdx} style={{ position: 'relative', borderLeft: '1px solid var(--color-border)', borderBottom: '1px solid var(--color-border)', height: 24 * 60 }}>
+            {HOURS.map(h => <div key={h} style={{ height: 60, borderBottom: h === 23 ? 'none' : '1px solid var(--color-border-subtle)' }}></div>)}
+            {/* Events */}
+            {events.filter(e => new Date(e.start_time).toDateString() === date.toDateString()).map(e => {
+              const start = new Date(e.start_time);
+              const end = new Date(e.end_time);
+              const top = (start.getHours() * 60) + start.getMinutes();
+              const height = Math.max(30, ((end.getTime() - start.getTime()) / 60000));
+              return (
+                <div 
+                  key={e.id}
+                  onClick={() => { setEditingEvent(e); setIsModalOpen(true); }}
+                  style={{ 
+                    position: 'absolute', left: 4, right: 4, top, height, 
+                    backgroundColor: (e.color || 'var(--color-primary)') + 'dd',
+                    border: '1px solid rgba(255,255,255,0.2)', borderRadius: 4, padding: '4px 8px',
+                    color: 'white', fontSize: 11, fontWeight: 700, zIndex: 5, overflow: 'hidden', cursor: 'pointer'
+                  }}
+                >
+                  {start.getHours()}:{start.getMinutes().toString().padStart(2, '0')} {e.title}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="calendar-page" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
       
@@ -286,15 +352,8 @@ export const CalendarView = () => {
             </div>
           )}
 
-          {view !== 'month' && (
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)' }}>
-              <div style={{ textAlign: 'center' }}>
-                <Clock size={40} style={{ opacity: 0.2, marginBottom: 12 }} />
-                <p style={{ fontSize: 14 }}>Wochen/Tag-Ansicht wird für Grid-System optimiert...</p>
-                <button className="btn-secondary" onClick={() => setView('month')}>Zurück zur Monatsansicht</button>
-              </div>
-            </div>
-          )}
+          {view === 'week' && <TimeGrid dates={weekDays} />}
+          {view === 'day' && <TimeGrid dates={[currentDate]} />}
 
           {loading && (
             <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10, backdropFilter: 'blur(2px)' }}>

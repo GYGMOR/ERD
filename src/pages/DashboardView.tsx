@@ -120,9 +120,9 @@ export const DashboardView = () => {
           onClick={() => navigate('/projects')}
         />
         <KpiCard
-          title="Umsatz (Jun)"
-          value="CHF 7'540"
-          badge="+12%"
+          title={`Umsatz (${new Date().toLocaleDateString('de-CH', { month: 'short' })})`}
+          value={`CHF ${(metrics as any).monthRevenue?.toLocaleString('de-CH') || '0'}`}
+          badge={ (metrics as any).monthRevenue > 0 ? "+12%" : undefined }
           badgeCls="success"
           color="#36b37e"
           icon={TrendingUp}
@@ -132,7 +132,7 @@ export const DashboardView = () => {
           title="Überfällig"
           value={metrics.overdueInvoices}
           sub="Zahlungserinnerungen"
-          badge="Aktion nötig"
+          badge={metrics.overdueInvoices > 0 ? "Aktion nötig" : undefined}
           badgeCls="danger"
           color="#ff5630"
           icon={AlertTriangle}

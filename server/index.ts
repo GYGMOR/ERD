@@ -1940,6 +1940,56 @@ app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manag
   }
 });
 
+app.get('/api/dashboard/metrics', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+
+    // 1. Tickets (Open & Critical)
+    const tickets = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status != 'closed' AND status != 'resolved') as open,
+        COUNT(*) FILTER (WHERE priority = 'critical' AND status != 'closed') as critical
+      FROM tickets WHERE tenant_id = $1
+    `, [tenant_id]);
+
+    // 2. Leads (New in last 7 days)
+    const leads = await pool.query(`
+      SELECT COUNT(*) as total FROM leads 
+      WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+    `, [tenant_id]);
+
+    // 3. Projects (Active)
+    const projects = await pool.query(`
+      SELECT COUNT(*) as total FROM projects 
+      WHERE tenant_id = $1 AND status != 'completed' AND status != 'cancelled'
+    `, [tenant_id]);
+
+    // 4. Finance (Revenue of current month & Overdue invoices)
+    const finance = await pool.query(`
+      SELECT 
+        SUM(amount) FILTER (WHERE issue_date >= DATE_TRUNC('month', CURRENT_DATE)) as month_revenue,
+        COUNT(*) FILTER (WHERE status = 'overdue' OR (status = 'pending' AND due_date < CURRENT_DATE)) as overdue_count
+      FROM invoices WHERE tenant_id = $1
+    `, [tenant_id]);
+
+    res.json({
+      success: true,
+      metrics: {
+        openTickets: parseInt(tickets.rows[0].open || '0'),
+        criticalTickets: parseInt(tickets.rows[0].critical || '0'),
+        newLeads: parseInt(leads.rows[0].total || '0'),
+        activeProjects: parseInt(projects.rows[0].total || '0'),
+        monthRevenue: parseFloat(finance.rows[0].month_revenue || '0'),
+        overdueInvoices: parseInt(finance.rows[0].overdue_count || '0')
+      }
+    });
+  } catch (error) {
+    console.error('Dashboard Metrics Error:', error);
+    res.status(500).json({ success: false, error: 'Internal Server Error' });
+  }
+});
+
 // ─── Webhooks (External Integration) ──────────────────────────────────────────
 
 app.post('/api/webhooks/tickets', async (req: express.Request, res: express.Response) => {

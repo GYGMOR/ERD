@@ -9,6 +9,23 @@ export const BusinessCardView = () => {
   // Gross ICT Design Colors
   const gold = "#e5b35a";
 
+  const generateVCard = () => {
+    if (!currentUser) return '';
+    return [
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${currentUser.firstName} ${currentUser.lastName}`,
+      `N:${currentUser.lastName};${currentUser.firstName};;;`,
+      'ORG:Gross ICT',
+      'TITLE:Web Solutions Engineer',
+      'TEL;TYPE=CELL:+41 76 480 42 16',
+      `EMAIL;TYPE=INTERNET:${currentUser.email}`,
+      'ADR;TYPE=WORK:;;Neuhushof 3;Zell;LU;6144;Switzerland',
+      'URL:https://www.gross-ict.ch',
+      'END:VCARD'
+    ].join('\n');
+  };
+
   return (
     <div className="card-page">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
@@ -21,11 +38,16 @@ export const BusinessCardView = () => {
           </p>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
-          <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Share2 size={16} /> QR Code teilen
-          </button>
-          <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Download size={16} /> Wallet (vCard)
+          <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 8 }} onClick={() => {
+            const vCard = generateVCard();
+            const blob = new Blob([vCard], { type: 'text/vcard' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${currentUser?.firstName}_${currentUser?.lastName}.vcf`;
+            a.click();
+          }}>
+            <Download size={16} /> Visitenkarte (.vcf)
           </button>
         </div>
       </div>
@@ -95,16 +117,33 @@ export const BusinessCardView = () => {
            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
              <QrCode size={18} /> Schnell-Zugriff
            </h3>
-           <div style={{ display: 'flex', gap: 20, alignItems: 'center' }}>
-             <div style={{ width: 100, height: 100, backgroundColor: 'white', padding: 8, borderRadius: 8 }}>
-                {/* Mock QR Code */}
-                <div style={{ width: '100%', height: '100%', border: '4px solid black' }}></div>
+           <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+             <div style={{ width: 140, height: 140, backgroundColor: 'white', padding: 8, borderRadius: 8, border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <img 
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(generateVCard())}`} 
+                  alt="QR Code" 
+                  style={{ width: '100%', height: '100%' }}
+                />
              </div>
-             <div style={{ flex: 1 }}>
+             <div style={{ flex: 1, minWidth: 200 }}>
                <p style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
                  Lassen Sie diesen Code von Ihrem Gegenüber scannen, um Ihre Kontaktdaten sofort zu speichern.
                </p>
-               <button className="btn-secondary" style={{ width: '100%' }}>In Apple / Google Wallet speichern</button>
+               <button 
+                className="btn-primary" 
+                style={{ width: '100%' }}
+                onClick={() => {
+                  const vCard = generateVCard();
+                  const blob = new Blob([vCard], { type: 'text/vcard' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${currentUser?.firstName}_${currentUser?.lastName}.vcf`;
+                  a.click();
+                }}
+               >
+                 In Kontakte speichern
+               </button>
              </div>
            </div>
         </div>
