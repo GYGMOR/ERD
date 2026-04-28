@@ -73,7 +73,7 @@ export const DashboardView = () => {
     <div className="dashboard-page" style={{ maxWidth: 1400, margin: '0 auto' }}>
       
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+      <div className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28, flexWrap: 'wrap', gap: 16 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.02em', display: 'flex', alignItems: 'center', gap: 12 }}>
             <Activity size={28} color="var(--color-primary)" /> Command Center
@@ -82,7 +82,7 @@ export const DashboardView = () => {
             Echtzeit-Überblick über alle Unternehmensbereiche.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
            <button className="btn-secondary" onClick={() => navigate('/timeline')}>
              <Clock size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> History
            </button>
@@ -93,7 +93,7 @@ export const DashboardView = () => {
       </div>
 
       {/* KPI Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 24 }}>
+      <div className="grid-responsive grid-cols-1-5" style={{ marginBottom: 24 }}>
         <KpiCard
           title="Offene Supportfälle"
           value={metrics.openTickets}
@@ -140,7 +140,12 @@ export const DashboardView = () => {
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
+      <div className="grid-responsive" style={{ gridTemplateColumns: 'var(--dashboard-main-cols, 2fr 1fr)' }}>
+        <style>{`
+          @media (max-width: 1024px) {
+            .dashboard-page { --dashboard-main-cols: 1fr; }
+          }
+        `}</style>
         
         {/* Left Column: Analytics */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -180,7 +185,7 @@ export const DashboardView = () => {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+          <div className="grid-responsive grid-cols-1-2">
              {/* Sales Pipeline */}
              <div className="card" style={{ padding: 20 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 16 }}>Sales Pipeline</h3>

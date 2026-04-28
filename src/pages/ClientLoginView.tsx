@@ -44,7 +44,12 @@ export const ClientLoginView = ({ onLogin }: { onLogin: () => void }) => {
       background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)', 
       position: 'absolute', top: 0, left: 0, zIndex: 100 
     }}>
-      <div className="card animate-in fade-in zoom-in duration-300" style={{ width: 420, padding: 40, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)' }}>
+      <style>{`
+        @media (max-width: 480px) {
+          .client-login-card { padding: 24px !important; width: 95% !important; }
+        }
+      `}</style>
+      <div className="card client-login-card animate-in fade-in zoom-in duration-300" style={{ width: '90%', maxWidth: 420, padding: 40, boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1), 0 10px 10px -5px rgba(0,0,0,0.04)' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <div style={{ 
             width: 64, height: 64, backgroundColor: 'var(--color-primary)', borderRadius: 16, 

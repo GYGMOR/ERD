@@ -111,10 +111,20 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
   };
 
   return (
-    <div style={{ height: '100vh', width: '100vw', display: 'flex', backgroundColor: 'var(--color-surface)', overflow: 'hidden' }}>
+    <div className="login-wrapper" style={{ height: '100vh', width: '100vw', display: 'flex', backgroundColor: 'var(--color-surface)', overflow: 'hidden' }}>
+      <style>{`
+        @media (max-width: 900px) {
+          .login-brand-side { display: none; }
+          .login-form-side { flex: 1; width: 100%; }
+        }
+        @media (max-width: 480px) {
+          .login-form-container { padding: 20px; }
+          .login-form-side { padding: 20px; }
+        }
+      `}</style>
       
       {/* Left Side - Brand & Graphics */}
-      <div style={{ flex: 1, backgroundColor: 'var(--color-primary)', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '64px', color: 'white' }}>
+      <div className="login-brand-side" style={{ flex: 1, backgroundColor: 'var(--color-primary)', position: 'relative', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '64px', color: 'white' }}>
         <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(135deg, rgba(0,82,204,1) 0%, rgba(7,71,166,1) 100%)', zIndex: 0 }}></div>
         <div style={{ position: 'relative', zIndex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '40px' }}>
@@ -137,8 +147,8 @@ export const GlobalLoginView = ({ onLogin }: { onLogin: () => void }) => {
       </div>
 
       {/* Right Side - Login Form */}
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', position: 'relative' }}>
-        <div style={{ width: '100%', maxWidth: '400px' }}>
+      <div className="login-form-side" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px', position: 'relative' }}>
+        <div className="login-form-container" style={{ width: '100%', maxWidth: '400px' }}>
           
           <div style={{ marginBottom: '40px' }}>
             <h2 style={{ fontSize: '2rem', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '8px' }}>Willkommen zurück</h2>

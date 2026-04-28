@@ -74,6 +74,7 @@ const NavItem = ({ to, icon: Icon, label, isCollapsed }: { to: string, icon: any
 
 export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const user = getUser();
   
   const { instance } = useMsal();
@@ -98,8 +99,14 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
 
   return (
     <div className="app-container">
+      {/* Mobile Overlay */}
+      <div 
+        className={`mobile-overlay ${isMobileMenuOpen ? 'visible' : ''}`} 
+        onClick={() => setIsMobileMenuOpen(false)}
+      />
+
       {/* Sidebar */}
-      <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+      <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''} ${isMobileMenuOpen ? 'open' : ''}`}>
         <div className="sidebar-header" style={{ padding: isCollapsed ? '12px 0' : '12px 14px', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start', gap: 8, borderBottom: '1px solid var(--color-border)', height: 'var(--header-height)' }}>
           <div style={{ width: 28, height: 28, minWidth: 28, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 14, fontWeight: 700 }}>N</div>
           {!isCollapsed && <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--color-primary)' }}>Kundenportal</span>}
@@ -107,7 +114,9 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
 
         <nav className="sidebar-nav" style={{ padding: '8px 0' }}>
           {navItems.map(item => (
-            <NavItem key={item.to} {...item} isCollapsed={isCollapsed} />
+            <div key={item.to} onClick={() => setIsMobileMenuOpen(false)}>
+              <NavItem {...item} isCollapsed={isCollapsed} />
+            </div>
           ))}
         </nav>
 
@@ -134,10 +143,16 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button 
-              onClick={() => setIsCollapsed(!isCollapsed)}
+              onClick={() => {
+                if (window.innerWidth <= 768) {
+                  setIsMobileMenuOpen(!isMobileMenuOpen);
+                } else {
+                  setIsCollapsed(!isCollapsed);
+                }
+              }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
             >
-              {isCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
+              {window.innerWidth <= 768 ? <Menu size={20} /> : (isCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />)}
             </button>
             <h1 style={{ fontSize: 16, fontWeight: 600 }}>
               Willkommen, {user?.firstName}
@@ -149,7 +164,7 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
             <NotificationCenter />
             <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ textAlign: 'right' }}>
+              <div className="user-profile-text" style={{ textAlign: 'right' }}>
                 <p style={{ fontSize: 12, fontWeight: 600 }}>{user?.firstName} {user?.lastName}</p>
                 <p style={{ fontSize: 10, color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>{user?.role}</p>
               </div>
@@ -157,6 +172,11 @@ export const CustomerLayout: React.FC<{ children: React.ReactNode }> = ({ childr
                 {user?.firstName?.charAt(0)}{user?.lastName?.charAt(0)}
               </div>
             </div>
+            <style>{`
+              @media (max-width: 480px) {
+                .user-profile-text { display: none; }
+              }
+            `}</style>
           </div>
         </header>
 

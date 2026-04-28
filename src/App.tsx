@@ -149,11 +149,11 @@ const NAV_GROUPS: NavGroup[] = [
 ];
 
 // ─── Sidebar Component ────────────────────────────────────────────────────────
-const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean; onLogout: () => void }) => {
+const Sidebar = ({ isCollapsed, isOpen, onLogout, onClose }: { isCollapsed: boolean; isOpen: boolean; onLogout: () => void; onClose: () => void }) => {
   const userRole = (getUser()?.role || 'customer') as UserRole;
 
   return (
-    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+    <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''} ${isOpen ? 'open' : ''}`}>
       {/* Fixed Brand Header */}
       <div className="sidebar-header" style={{ padding: isCollapsed ? '12px 0' : '12px 14px', display: 'flex', alignItems: 'center', justifyContent: isCollapsed ? 'center' : 'flex-start', gap: 8, borderBottom: '1px solid var(--color-border)', height: 'var(--header-height)' }}>
         <div style={{ width: 28, height: 28, minWidth: 28, backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-md)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontSize: 14, fontWeight: 700 }}>N</div>
@@ -169,7 +169,9 @@ const Sidebar = ({ isCollapsed, onLogout }: { isCollapsed: boolean; onLogout: ()
             <div key={group.label} style={{ marginBottom: isCollapsed ? 12 : 16 }}>
               <GroupLabel label={group.label} isCollapsed={isCollapsed} />
               {visibleItems.map(item => (
-                <NavItem key={item.to} to={item.to} icon={item.icon} label={item.label} isCollapsed={isCollapsed} />
+                <div key={item.to} onClick={onClose}>
+                  <NavItem to={item.to} icon={item.icon} label={item.label} isCollapsed={isCollapsed} />
+                </div>
               ))}
             </div>
           );
@@ -210,6 +212,7 @@ const Placeholder = ({ title, icon: Icon }: { title: string; icon: React.Element
 const AppChild = () => {
   const { instance, inProgress } = useMsal();
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem('token'));
   const [isProcessingAuth, setIsProcessingAuth] = useState(true);
   const location = useLocation();
@@ -352,19 +355,35 @@ const AppChild = () => {
 
   return (
     <div className="app-container">
-      <Sidebar isCollapsed={isSidebarCollapsed} onLogout={handleLogout} />
+      <div 
+        className={`mobile-overlay ${isMobileMenuOpen ? 'visible' : ''}`} 
+        onClick={() => setIsMobileMenuOpen(false)}
+      />
+      
+      <Sidebar 
+        isCollapsed={isSidebarCollapsed} 
+        isOpen={isMobileMenuOpen} 
+        onLogout={handleLogout} 
+        onClose={() => setIsMobileMenuOpen(false)}
+      />
 
       <main className="main-content">
         <header className="topbar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
-              onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+              onClick={() => {
+                if (window.innerWidth <= 768) {
+                  setIsMobileMenuOpen(!isMobileMenuOpen);
+                } else {
+                  setIsSidebarCollapsed(!isSidebarCollapsed);
+                }
+              }}
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, borderRadius: '50%', color: 'var(--color-text-muted)' }}
               aria-label="Toggle Sidebar"
             >
-              {isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />}
+              {window.innerWidth <= 768 ? <Menu size={20} /> : (isSidebarCollapsed ? <Menu size={17} /> : <ChevronLeft size={17} />)}
             </button>
-            <div style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
+            <div className="search-container-desktop" style={{ position: 'relative', width: '100%', maxWidth: 320 }}>
               <Search size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
               <input
                 type="text"
@@ -378,6 +397,11 @@ const AppChild = () => {
                 className="search-input-premium"
               />
             </div>
+            <style>{`
+              @media (max-width: 640px) {
+                .search-container-desktop { display: none; }
+              }
+            `}</style>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -385,7 +409,7 @@ const AppChild = () => {
             <NotificationCenter />
             <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-border)', margin: '0 4px' }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-              <div style={{ textAlign: 'right' }}>
+              <div className="user-profile-text" style={{ textAlign: 'right' }}>
                 <p style={{ fontSize: 12, fontWeight: 600 }}>{currentUser ? `${currentUser.firstName} ${currentUser.lastName}` : 'Gast'}</p>
                 <p style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>{currentUser?.role || 'user'}</p>
               </div>
@@ -393,6 +417,11 @@ const AppChild = () => {
                 {currentUser ? `${currentUser.firstName.charAt(0)}${currentUser.lastName.charAt(0)}` : 'N'}
               </div>
             </div>
+            <style>{`
+              @media (max-width: 480px) {
+                .user-profile-text { display: none; }
+              }
+            `}</style>
           </div>
         </header>
 
