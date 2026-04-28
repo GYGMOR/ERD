@@ -1140,7 +1140,9 @@ app.post('/api/knowledge/folders', authenticateToken, async (req: AuthenticatedR
   }
 });
 
-// ─── Documents / Files Routes ────────────────────────────────────────────────
+// Helper for cleaning UUIDs
+const cleanUUID = (id: any) => (id && id !== 'null' && id !== '' && id !== 'undefined') ? id : null;
+
 app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
@@ -1148,23 +1150,26 @@ app.get('/api/files', authenticateToken, async (req: AuthenticatedRequest, res: 
 
     console.log(`Fetching files for tenant ${tenant_id}, type=${entity_type}, id=${entity_id}, parent=${parent_id}`);
 
-    let query = `SELECT * FROM files WHERE tenant_id = $1`;
+    let query = `SELECT * FROM files WHERE tenant_id = $1::UUID`;
     const params: any[] = [tenant_id];
 
     if (entity_type) {
       query += ` AND entity_type = $${params.length + 1}`;
       params.push(entity_type);
     }
-    if (entity_id && entity_id !== 'null') {
-      query += ` AND entity_id = $${params.length + 1}`;
-      params.push(entity_id);
+    
+    const cleanEntityId = cleanUUID(entity_id);
+    if (cleanEntityId) {
+      query += ` AND entity_id = $${params.length + 1}::UUID`;
+      params.push(cleanEntityId);
     }
 
-    if (parent_id === 'null' || !parent_id) {
+    const cleanParentId = cleanUUID(parent_id);
+    if (!cleanParentId) {
       query += ` AND parent_id IS NULL`;
     } else {
-      query += ` AND parent_id = $${params.length + 1}`;
-      params.push(parent_id);
+      query += ` AND parent_id = $${params.length + 1}::UUID`;
+      params.push(cleanParentId);
     }
 
     query += ` ORDER BY is_folder DESC, file_name ASC`;
@@ -1180,7 +1185,7 @@ app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedReque
   const { name, parent_id, entity_type, entity_id } = req.body;
   const { tenant_id, id: userId } = req.user!;
   
-  console.log(`Creating folder: ${name} for tenant ${tenant_id} (entity_id: ${entity_id})`);
+  console.log(`Creating folder: ${name} for tenant ${tenant_id}`);
   
   try {
     const result = await pool.query(
@@ -1189,13 +1194,12 @@ app.post('/api/files/folders', authenticateToken, async (req: AuthenticatedReque
       [
         tenant_id, 
         name, 
-        parent_id && parent_id !== 'null' ? parent_id : null, 
+        cleanUUID(parent_id), 
         entity_type || 'general', 
-        entity_id && entity_id !== 'null' ? entity_id : null, 
+        cleanUUID(entity_id), 
         userId
       ]
     );
-    console.log(`Folder created successfully: ${result.rows[0].id}`);
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating folder:', error);
@@ -1209,8 +1213,6 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
   const { parent_id, entity_type, entity_id } = req.body;
   const { tenant_id, id: userId } = req.user!;
 
-  console.log(`Uploading file: ${req.file.originalname} for tenant ${tenant_id}`);
-
   try {
     const result = await pool.query(
       `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, is_folder, parent_id, entity_type, entity_id, uploaded_by)
@@ -1221,13 +1223,12 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
         `/uploads/${req.file.filename}`, 
         req.file.mimetype, 
         req.file.size,
-        parent_id && parent_id !== 'null' ? parent_id : null,
+        cleanUUID(parent_id),
         entity_type || 'general',
-        entity_id && entity_id !== 'null' ? entity_id : null,
+        cleanUUID(entity_id),
         userId
       ]
     );
-    console.log(`File uploaded successfully: ${result.rows[0].id}`);
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Upload error:', error);
