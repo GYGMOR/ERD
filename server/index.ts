@@ -456,23 +456,29 @@ app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin
     // Close the related registration ticket if exists
     await pool.query("UPDATE tickets SET status = 'closed' WHERE customer_id = $1 AND type = 'registration'", [id]);
 
-    // Send Approval Email
-    await transporter.sendMail({
-      from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
-      to: email,
-      subject: 'Dein Konto wurde freigeschaltet!',
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Willkommen bei HED-IT, ${first_name}!</h2>
-          <p>Dein Konto wurde erfolgreich geprüft und freigeschaltet.</p>
-          <p>Du kannst dich jetzt im Kundenportal einloggen und alle Funktionen nutzen.</p>
-          <a href="https://hed-it.ch/login" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Zum Login</a>
-          <p>Viel Spaß!</p>
-        </div>
-      `
-    });
+    // Send Approval Email (Try-catch to prevent blocking approval if SMTP is not configured)
+    try {
+      await transporter.sendMail({
+        from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
+        to: email,
+        subject: 'Dein Konto wurde freigeschaltet!',
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2>Willkommen bei HED-IT, ${first_name}!</h2>
+            <p>Dein Konto wurde erfolgreich geprüft und freigeschaltet.</p>
+            <p>Du kannst dich jetzt im Kundenportal einloggen und alle Funktionen nutzen.</p>
+            <a href="https://hed-it.ch/login" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Zum Login</a>
+            <p>Viel Spaß!</p>
+            <p>Dein HED-IT Team</p>
+          </div>
+        `
+      });
+    } catch (mailError) {
+      console.error('Failed to send approval email:', mailError);
+      // We don't throw here, because the user is already activated in the DB.
+    }
 
-    res.status(200).json({ success: true, message: 'Benutzer erfolgreich freigeschaltet und benachrichtigt.' });
+    res.status(200).json({ success: true, message: 'Benutzer erfolgreich freigeschaltet.' });
   } catch (error) {
     console.error('Approval error:', error);
     res.status(500).json({ success: false, error: 'Fehler bei der Freischaltung' });
