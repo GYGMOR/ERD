@@ -8,6 +8,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import fs from 'fs-extra';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { authenticator } = require('otplib');
+import QRCode from 'qrcode';
+
+
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -169,6 +176,10 @@ pool.query('SELECT NOW()', (err: Error | null) => {
       )
     `).catch(err => console.error('Error creating api_keys table:', err));
 
+    // 2FA columns
+    pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT').catch(() => {});
+    pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false').catch(() => {});
+
     // Products folder support
     pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(err => console.error('Error adding is_folder to products:', err));
     pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(err => console.error('Error adding parent_id to products:', err));
@@ -211,6 +222,16 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
       return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
+    // Check if 2FA is enabled
+    if (user.two_factor_enabled) {
+      return res.status(200).json({ 
+        success: true, 
+        requires2FA: true, 
+        userId: user.id,
+        email: user.email 
+      });
+    }
+
     // Generate JWT
     const token = jwt.sign(
       { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
@@ -224,6 +245,65 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
     res.status(500).json({ success: false, error: 'Server error during login' });
   }
 });
+
+// 2FA: Verify during login
+app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express.Response) => {
+  const { userId, code } = req.body;
+  try {
+    const userResult = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+    if (userResult.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    
+    const user = userResult.rows[0];
+    const isValid = authenticator.verify({ token: code, secret: user.two_factor_secret });
+    
+    if (!isValid) return res.status(401).json({ success: false, error: 'Ungültiger 2FA Code' });
+
+    const token = jwt.sign(
+      { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role, firstName: user.first_name, lastName: user.last_name } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: '2FA verification failed' });
+  }
+});
+
+// 2FA: Setup (Request secret and QR)
+app.post('/api/auth/2fa/setup', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id, email } = req.user!;
+  const secret = authenticator.generateSecret();
+  const otpauth = authenticator.keyuri(email, 'hed-it.ch', secret);
+  
+  try {
+    const qrCodeUrl = await QRCode.toDataURL(otpauth);
+    // Store secret temporarily but don't enable yet
+    await pool.query('UPDATE users SET two_factor_secret = $1 WHERE id = $2', [secret, id]);
+    res.json({ success: true, qrCodeUrl, secret });
+  } catch (error) {
+    res.status(500).json({ success: false, error: '2FA Setup failed' });
+  }
+});
+
+// 2FA: Enable (Verify first code)
+app.post('/api/auth/2fa/enable', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.user!;
+  const { code } = req.body;
+  try {
+    const userResult = await pool.query('SELECT two_factor_secret FROM users WHERE id = $1', [id]);
+    const secret = userResult.rows[0].two_factor_secret;
+    
+    const isValid = authenticator.verify({ token: code, secret });
+    if (!isValid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
+    
+    await pool.query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [id]);
+    res.json({ success: true, message: '2FA erfolgreich aktiviert' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to enable 2FA' });
+  }
+});
+
 
 // Auth Route: Microsoft Entra ID (Azure AD) Sync
 app.post('/api/auth/msal-sync', async (req: express.Request, res: express.Response) => {
@@ -723,6 +803,53 @@ app.post('/api/tickets', async (req: express.Request, res: express.Response) => 
     res.status(500).json({ success: false, error: 'Server error creating ticket' });
   }
 });
+
+// ─── Public Inquiry Route (from hed-it-web) ──────────────────────────────────
+app.post('/api/public/inquiry', upload.single('pdf'), async (req: express.Request, res: express.Response) => {
+  const { subject, details, customer } = req.body;
+  
+  try {
+    // 1. Get first tenant
+    const tenantResult = await pool.query('SELECT id FROM tenants LIMIT 1');
+    if (tenantResult.rows.length === 0) return res.status(500).json({ success: false, error: 'No tenant found' });
+    const tenant_id = tenantResult.rows[0].id;
+
+    // 2. Create Ticket
+    const ticketResult = await pool.query(
+      `INSERT INTO tickets (tenant_id, title, description, status, priority, type) 
+       VALUES ($1, $2, $3, 'new', 'medium', 'support') RETURNING *`,
+      [tenant_id, subject, details || 'Keine Details angegeben']
+    );
+    const ticketId = ticketResult.rows[0].id;
+
+    // 3. Attach PDF if present
+    if (req.file) {
+      await pool.query(
+        `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, entity_type, entity_id)
+         VALUES ($1, $2, $3, $4, $5, 'ticket', $6)`,
+        [tenant_id, req.file.originalname, `/uploads/${req.file.filename}`, req.file.mimetype, req.file.size, ticketId]
+      );
+    }
+
+    // 4. Create Notification
+    await createNotification({
+      tenant_id: tenant_id,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: ticketId,
+      title: 'Neue Web-Anfrage',
+      message: `Eine neue Anfrage "${subject}" wurde über die Webseite gesendet.`,
+      priority: 'normal',
+      link: `/tickets/${ticketId}`
+    });
+
+    res.status(201).json({ success: true, ticketId });
+  } catch (error) {
+    console.error('Public inquiry error:', error);
+    res.status(500).json({ success: false, error: 'Failed to process inquiry' });
+  }
+});
+
 
 app.post('/api/tickets/:id/signature', authenticateToken, async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
