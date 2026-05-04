@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Ticket, Clock, MessageSquare, Send, CheckCircle, User, 
   Building2, Calendar, AlertCircle, ChevronLeft, ArrowLeft,
-  Paperclip, MoreVertical, Shield, ExternalLink, RefreshCw
+  Paperclip, MoreVertical, Shield, ExternalLink, RefreshCw,
+  UserCheck, UserX
 } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { getUser } from '../utils/auth';
@@ -172,6 +173,49 @@ export const TicketDetailView = () => {
     }
   };
 
+  const handleApproveUser = async () => {
+    if (!ticket?.customer_id) return;
+    if (!window.confirm('Möchten Sie diesen Benutzer wirklich freischalten?')) return;
+    setSaving(true);
+    try {
+      const res = await dataService.approveUser(ticket.customer_id);
+      if (res.success) {
+        setSaveSuccess(true);
+        setStatus('closed');
+        setTimeout(() => setSaveSuccess(false), 2500);
+      } else {
+        setError(res.error || 'Fehler bei der Freischaltung.');
+      }
+    } catch {
+      setError('Netzwerkfehler.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRejectUser = async () => {
+    if (!ticket?.customer_id) return;
+    if (!window.confirm('Möchten Sie diesen Benutzer wirklich ablehnen? Der Account wird gelöscht.')) return;
+    setSaving(true);
+    try {
+      const res = await dataService.rejectUser(ticket.customer_id);
+      if (res.success) {
+        setSaveSuccess(true);
+        setStatus('closed');
+        setTimeout(() => {
+          setSaveSuccess(false);
+          navigate('/tickets');
+        }, 2500);
+      } else {
+        setError(res.error || 'Fehler bei der Ablehnung.');
+      }
+    } catch {
+      setError('Netzwerkfehler.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSignatureSave = async (dataUrl: string) => {
     try {
       const res = await fetch(`/api/tickets/${id}/signature`, {
@@ -224,7 +268,17 @@ export const TicketDetailView = () => {
           </div>
           
           <div style={{ display: 'flex', gap: 10 }}>
-            {status === 'open' && (
+            {ticket.type === 'registration' && status === 'open' && (
+              <>
+                <button className="btn-danger" onClick={handleRejectUser} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8 }}>
+                  <UserX size={18} /> Registrierung ablehnen
+                </button>
+                <button className="btn-success" onClick={handleApproveUser} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8, backgroundColor: '#36b37e', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+                  <UserCheck size={18} /> Benutzer freischalten
+                </button>
+              </>
+            )}
+            {status === 'open' && ticket.type !== 'registration' && (
               <button className="btn-secondary" onClick={handleTakeOver} disabled={saving}>Ticket übernehmen</button>
             )}
             <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichert...' : 'Änderungen speichern'}</button>

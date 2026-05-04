@@ -59,6 +59,30 @@ export const dataService = {
     }
   },
 
+  async approveUser(id: string) {
+    try {
+      const data = await fetch(`${API_BASE}/admin/users/${id}/approve`, {
+        method: 'POST',
+        headers: getHeaders()
+      }).then(handleResponse);
+      return data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
+  async rejectUser(id: string) {
+    try {
+      const data = await fetch(`${API_BASE}/admin/users/${id}/reject`, {
+        method: 'POST',
+        headers: getHeaders()
+      }).then(handleResponse);
+      return data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
   // --- SETTINGS ---
   async getSettings(tenantId: string) {
     try {

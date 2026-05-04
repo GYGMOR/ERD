@@ -12,6 +12,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { authenticator } = require('otplib');
 import QRCode from 'qrcode';
+import nodemailer from 'nodemailer';
 
 
 
@@ -28,6 +29,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
 
 app.use(cors());
 app.use(express.json());
+
+// SMTP Transporter Setup
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST || 'localhost',
+  port: parseInt(process.env.SMTP_PORT || '587', 10),
+  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 // Serve static files from the frontend build directory
 const distPath = path.join(__dirname, '../dist');
@@ -210,12 +222,19 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
   }
 
   try {
-    const userResult = await pool.query('SELECT * FROM users WHERE email = $1 AND is_active = true', [email]);
+    const userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (userResult.rows.length === 0) {
-      return res.status(401).json({ success: false, error: 'Invalid credentials or user inactive' });
+      return res.status(401).json({ success: false, error: 'Ungültige Anmeldedaten.' });
     }
 
     const user = userResult.rows[0];
+
+    if (!user.is_active) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Ihr Konto wird derzeit noch geprüft. Wir schalten Sie in der Regel innerhalb von 24-48 Stunden frei.' 
+      });
+    }
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
     
     if (!passwordMatch) {
@@ -243,6 +262,214 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ success: false, error: 'Server error during login' });
+  }
+});
+
+// Auth Route: Register
+app.post('/api/auth/register', async (req: express.Request, res: express.Response) => {
+  const { email, password, firstName, lastName, botVerificationChecked } = req.body;
+
+  if (botVerificationChecked !== true) {
+    return res.status(400).json({ success: false, error: 'Bitte bestätige, dass du kein Roboter bist.' });
+  }
+
+  try {
+    // Check if user already exists
+    const existingUser = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ success: false, error: 'Diese E-Mail Adresse wird bereits verwendet.' });
+    }
+
+    // Get default tenant (or create if none)
+    let tenantId;
+    const tenantResult = await pool.query('SELECT id FROM tenants LIMIT 1');
+    if (tenantResult.rows.length > 0) {
+      tenantId = tenantResult.rows[0].id;
+    } else {
+      const newTenant = await pool.query('INSERT INTO tenants (name) VALUES ($1) RETURNING id', ['HED-IT Management']);
+      tenantId = newTenant.rows[0].id;
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    // Create user (INACTIVE by default for approval)
+    const newUser = await pool.query(
+      `INSERT INTO users (tenant_id, email, password_hash, first_name, last_name, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, email, role`,
+      [tenantId, email, passwordHash, firstName, lastName, 'customer', false]
+    );
+
+    const userId = newUser.rows[0].id;
+
+    // Automatically create a contact entry for the user
+    const contactResult = await pool.query(
+      'INSERT INTO contacts (tenant_id, user_id, first_name, last_name, email) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+      [tenantId, userId, firstName, lastName, email]
+    );
+
+    // CREATE SYSTEM TICKET FOR APPROVAL
+    const ticketResult = await pool.query(
+      `INSERT INTO tickets (tenant_id, customer_id, title, description, priority, status, type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        tenantId, 
+        userId, 
+        `Neuregistrierung: ${firstName} ${lastName}`, 
+        `Ein neuer Benutzer hat sich registriert und wartet auf Freischaltung.\nE-Mail: ${email}\nName: ${firstName} ${lastName}`,
+        'high',
+        'open',
+        'registration'
+      ]
+    );
+
+    // NOTIFY ADMINS
+    await createNotification({
+      tenant_id: tenantId,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: ticketResult.rows[0].id,
+      title: 'Neue Benutzer-Registrierung',
+      message: `${firstName} ${lastName} wartet auf Freischaltung.`,
+      priority: 'high',
+      link: `/tickets/${ticketResult.rows[0].id}`
+    });
+
+    res.status(201).json({ success: true, message: 'Registrierung erfolgreich. Wir prüfen Ihr Konto innerhalb von 24-48 Stunden.' });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ success: false, error: 'Serverfehler bei der Registrierung' });
+  }
+});
+
+// Auth Route: Forgot Password
+app.post('/api/auth/forgot-password', async (req: express.Request, res: express.Response) => {
+  const { email } = req.body;
+
+  try {
+    const userResult = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (userResult.rows.length === 0) {
+      // Don't reveal that the user doesn't exist for security
+      return res.status(200).json({ success: true, message: 'Falls ein Konto mit dieser E-Mail existiert, wurde ein Link zum Zurücksetzen gesendet.' });
+    }
+
+    const userId = userResult.rows[0].id;
+    const resetToken = require('crypto').randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 3600000); // 1 hour
+
+    await pool.query(
+      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+      [resetToken, expires, userId]
+    );
+
+    const resetLink = `${process.env.APP_URL || 'https://hed-it.ch'}/reset-password?token=${resetToken}`;
+
+    await transporter.sendMail({
+      from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Passwort zurücksetzen',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Passwort zurücksetzen</h2>
+          <p>Du hast eine Anfrage zum Zurücksetzen deines Passworts gestellt.</p>
+          <p>Klicke auf den folgenden Link, um ein neues Passwort festzulegen:</p>
+          <a href="${resetLink}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Passwort zurücksetzen</a>
+          <p>Dieser Link ist für 1 Stunde gültig.</p>
+          <p>Falls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
+        </div>
+      `
+    });
+
+    res.status(200).json({ success: true, message: 'Link zum Zurücksetzen gesendet.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ success: false, error: 'Fehler beim Senden der E-Mail' });
+  }
+});
+
+// Auth Route: Reset Password
+app.post('/api/auth/reset-password', async (req: express.Request, res: express.Response) => {
+  const { token, password } = req.body;
+
+  try {
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW()',
+      [token]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(400).json({ success: false, error: 'Ungültiger oder abgelaufener Token.' });
+    }
+
+    const userId = userResult.rows[0].id;
+    const passwordHash = await bcrypt.hash(password, 10);
+
+    await pool.query(
+      'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL WHERE id = $2',
+      [passwordHash, userId]
+    );
+
+    res.status(200).json({ success: true, message: 'Passwort erfolgreich geändert.' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ success: false, error: 'Fehler beim Zurücksetzen des Passworts' });
+  }
+});
+
+// Admin Route: Approve User
+app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+
+  try {
+    const userResult = await pool.query('UPDATE users SET is_active = true WHERE id = $1 RETURNING email, first_name', [id]);
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Benutzer nicht gefunden.' });
+    }
+
+    const { email, first_name } = userResult.rows[0];
+
+    // Close the related registration ticket if exists
+    await pool.query("UPDATE tickets SET status = 'closed' WHERE customer_id = $1 AND type = 'registration'", [id]);
+
+    // Send Approval Email
+    await transporter.sendMail({
+      from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
+      to: email,
+      subject: 'Dein Konto wurde freigeschaltet!',
+      html: `
+        <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2>Willkommen bei HED-IT, ${first_name}!</h2>
+          <p>Dein Konto wurde erfolgreich geprüft und freigeschaltet.</p>
+          <p>Du kannst dich jetzt im Kundenportal einloggen und alle Funktionen nutzen.</p>
+          <a href="https://hed-it.ch/login" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Zum Login</a>
+          <p>Viel Spaß!</p>
+        </div>
+      `
+    });
+
+    res.status(200).json({ success: true, message: 'Benutzer erfolgreich freigeschaltet und benachrichtigt.' });
+  } catch (error) {
+    console.error('Approval error:', error);
+    res.status(500).json({ success: false, error: 'Fehler bei der Freischaltung' });
+  }
+});
+
+// Admin Route: Reject User
+app.post('/api/admin/users/:id/reject', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+
+  try {
+    // Delete user and all associated data (contacts, etc.)
+    await pool.query('DELETE FROM users WHERE id = $1 AND is_active = false', [id]);
+    
+    // Close the related registration ticket
+    await pool.query("UPDATE tickets SET status = 'closed', description = description || '\n\n[ABGELEHNT]' WHERE customer_id = $1 AND type = 'registration'", [id]);
+
+    res.status(200).json({ success: true, message: 'Registrierung abgelehnt und Benutzer gelöscht.' });
+  } catch (error) {
+    console.error('Rejection error:', error);
+    res.status(500).json({ success: false, error: 'Fehler bei der Ablehnung' });
   }
 });
 
