@@ -45,9 +45,12 @@ export const TicketsView = () => {
   const isAdminOrManager = currentUser && ['admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
-    // Default to 'meine' if employee/manager, 'alle' if admin
-    if (currentUser?.role === 'admin') setCurrentView('alle');
-    else setCurrentView('meine');
+    // Default to 'alle' for internal staff to see unassigned tickets (like registrations)
+    if (['admin', 'manager', 'employee'].includes(currentUser?.role || '')) {
+      setCurrentView('alle');
+    } else {
+      setCurrentView('meine');
+    }
   }, []);
 
   const fetchTickets = async () => {

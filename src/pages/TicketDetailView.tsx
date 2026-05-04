@@ -340,9 +340,9 @@ export const TicketDetailView = () => {
                   {commentError && <p style={{ color: 'var(--color-danger)', fontSize: 12, marginBottom: 10 }}>{commentError}</p>}
                   <textarea 
                     className="form-input" 
-                    rows={3} 
+                    rows={4} 
                     placeholder="Nachricht schreiben..." 
-                    style={{ resize: 'none', marginBottom: 12 }}
+                    style={{ resize: 'vertical', marginBottom: 12, width: '100%', minHeight: '100px' }}
                     value={commentBody}
                     onChange={(e) => setCommentBody(e.target.value)}
                   ></textarea>

@@ -323,10 +323,34 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
       ]
     );
 
-    // NOTIFY ADMINS
+    // NOTIFY ADMINS & MANAGERS
     await createNotification({
       tenant_id: tenantId,
       target_role: 'admin',
+      type: 'ticket',
+      entity_id: ticketResult.rows[0].id,
+      title: 'Neue Benutzer-Registrierung',
+      message: `${firstName} ${lastName} wartet auf Freischaltung.`,
+      priority: 'high',
+      link: `/tickets/${ticketResult.rows[0].id}`
+    });
+
+    // Also notify managers
+    await createNotification({
+      tenant_id: tenantId,
+      target_role: 'manager',
+      type: 'ticket',
+      entity_id: ticketResult.rows[0].id,
+      title: 'Neue Benutzer-Registrierung',
+      message: `${firstName} ${lastName} wartet auf Freischaltung.`,
+      priority: 'high',
+      link: `/tickets/${ticketResult.rows[0].id}`
+    });
+
+    // Also notify employees
+    await createNotification({
+      tenant_id: tenantId,
+      target_role: 'employee',
       type: 'ticket',
       entity_id: ticketResult.rows[0].id,
       title: 'Neue Benutzer-Registrierung',
@@ -697,7 +721,7 @@ app.get('/api/notifications', authenticateToken, async (req: AuthenticatedReques
     const { id: userId, role } = req.user!;
     const result = await pool.query(`
       SELECT * FROM notifications 
-      WHERE (user_id = $1 OR target_role = $2 OR (target_role = 'admin' AND $2 = 'admin'))
+      WHERE (user_id = $1 OR target_role = $2 OR (target_role = 'admin' AND ($2 = 'admin' OR $2 = 'manager')) OR (target_role = 'manager' AND ($2 = 'admin' OR $2 = 'manager')))
       AND is_read = false
       ORDER BY created_at DESC 
       LIMIT 50
