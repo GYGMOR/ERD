@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Mail, Phone, Building2 } from 'lucide-react';
+import { UserPlus, Mail, Phone, Building2, ShieldAlert, Check, Loader2 } from 'lucide-react';
 import { NewContactModal } from '../components/NewContactModal';
 import { dataService } from '../services/dataService';
 import type { Contact } from '../types/entities';
@@ -22,6 +22,55 @@ const getColor = (str: string) =>
   AVATAR_COLORS[
     str.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) % AVATAR_COLORS.length
   ];
+
+const Reset2FAButton = ({ userId }: { userId: string }) => {
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  const handleReset = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Soll die 2-Faktor-Authentifizierung für diesen Benutzer wirklich zurückgesetzt werden?')) return;
+    
+    setLoading(true);
+    try {
+      const res = await dataService.reset2FA(userId);
+      if (res.success) {
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 3000);
+      } else {
+        alert('Fehler: ' + res.error);
+      }
+    } catch (err) {
+      alert('Netzwerkfehler beim Zurücksetzen');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button 
+      onClick={handleReset}
+      disabled={loading || success}
+      style={{ 
+        padding: '6px 12px', 
+        borderRadius: 'var(--radius-sm)', 
+        fontSize: 11, 
+        fontWeight: 600,
+        backgroundColor: success ? 'var(--color-success)' : 'var(--color-surface-hover)',
+        color: success ? 'white' : 'var(--color-danger)',
+        border: success ? 'none' : '1px solid var(--color-danger)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        marginLeft: 'auto'
+      }}
+      className="hover-bg-row"
+    >
+      {loading ? <Loader2 size={12} className="animate-spin" /> : (success ? <Check size={12} /> : <ShieldAlert size={12} />)}
+      {success ? 'Zurückgesetzt' : '2FA Reset'}
+    </button>
+  );
+};
 
 export const ContactsView = () => {
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -112,6 +161,7 @@ export const ContactsView = () => {
               <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Funktion</th>
               <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>E-Mail</th>
               <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase' }}>Telefon</th>
+              <th style={{ padding: '14px 24px', fontWeight: 600, color: 'var(--color-text-muted)', fontSize: 12, textTransform: 'uppercase', textAlign: 'right' }}>Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -178,6 +228,11 @@ export const ContactsView = () => {
                       </a>
                     ) : (
                       <span style={{ color: 'var(--color-text-muted)', fontSize: 13 }}>–</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '14px 24px', textAlign: 'right' }}>
+                    {c.user_id && (
+                      <Reset2FAButton userId={c.user_id} />
                     )}
                   </td>
                 </tr>

@@ -24,6 +24,7 @@ interface CompanyDetailData {
   invoices: Invoice[];
   contracts: Contract[];
   contacts: Contact[];
+  documentCount: number;
 }
 
 const TabButton = ({ active, icon: Icon, label, count, onClick }: {
@@ -73,7 +74,7 @@ export const CustomerDetailView = () => {
     </div>
   );
 
-  const { company, tickets, invoices, contracts = [], contacts = [] } = data;
+  const { company, tickets, invoices, contracts = [], contacts = [], documentCount = 0 } = data;
   const totalRevenue = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + parseFloat(String(i.amount || '0')), 0);
   const openTickets = tickets.filter(t => !['closed', 'resolved'].includes(t.status)).length;
 
@@ -159,7 +160,7 @@ export const CustomerDetailView = () => {
         <TabButton active={activeTab === 'invoices'} icon={FileText} label="Rechnungen" count={invoices.length} onClick={() => setActiveTab('invoices')} />
         <TabButton active={activeTab === 'contracts'} icon={FileSignature} label="Verträge" count={contracts.length} onClick={() => setActiveTab('contracts')} />
         <TabButton active={activeTab === 'contacts'} icon={Users} label="Kontakte" count={contacts.length} onClick={() => setActiveTab('contacts')} />
-        <TabButton active={activeTab === 'documents'} icon={FileText} label="Dokumente" count={0} onClick={() => setActiveTab('documents')} />
+        <TabButton active={activeTab === 'documents'} icon={FileText} label="Dokumente" count={documentCount} onClick={() => setActiveTab('documents')} />
       </div>
 
       {/* Tab: Tickets */}

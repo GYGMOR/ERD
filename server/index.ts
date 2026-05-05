@@ -13,6 +13,8 @@ const require = createRequire(import.meta.url);
 import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
 import { Resend } from 'resend';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1174,7 +1176,16 @@ app.get('/api/companies/:id', async (req: express.Request, res: express.Response
     const invoices = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY created_at DESC', [id]);
     const contracts = await pool.query('SELECT * FROM contracts WHERE company_id = $1 ORDER BY created_at DESC', [id]);
     const contacts = await pool.query('SELECT * FROM contacts WHERE company_id = $1 ORDER BY created_at DESC', [id]);
-    res.status(200).json({ success: true, data: { company: company.rows[0], tickets: tickets.rows, invoices: invoices.rows, contracts: contracts.rows, contacts: contacts.rows } });
+    const docCount = await pool.query('SELECT COUNT(*) FROM files WHERE entity_type = \'company\' AND entity_id = $1', [id]);
+    
+    res.status(200).json({ success: true, data: { 
+      company: company.rows[0], 
+      tickets: tickets.rows, 
+      invoices: invoices.rows, 
+      contracts: contracts.rows, 
+      contacts: contacts.rows,
+      documentCount: parseInt(docCount.rows[0].count || '0')
+    } });
   } catch (error) {
     console.error('Error fetching company detail:', error);
     res.status(500).json({ success: false, error: 'Server error fetching company detail' });
@@ -1347,6 +1358,16 @@ app.post('/api/tickets', authenticateToken, async (req: AuthenticatedRequest, re
 // ─── Public Inquiry Route (from hed-it-web) ──────────────────────────────────
 app.post('/api/public/inquiry', upload.single('pdf'), async (req: express.Request, res: express.Response) => {
   const { subject, details, customer } = req.body;
+  const authHeader = req.headers.authorization;
+  let userId: string | null = null;
+
+  // Check if user is logged in
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.split(' ')[1], JWT_SECRET) as any;
+      userId = decoded.id;
+    } catch (e) {}
+  }
   
   try {
     // 1. Get first tenant
@@ -1364,10 +1385,16 @@ app.post('/api/public/inquiry', upload.single('pdf'), async (req: express.Reques
 
     // 3. Attach PDF if present
     if (req.file) {
+      let companyId: string | null = null;
+      if (userId) {
+        const cRes = await pool.query('SELECT company_id FROM contacts WHERE user_id = $1', [userId]);
+        companyId = cRes.rows[0]?.company_id;
+      }
+
       await pool.query(
-        `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, entity_type, entity_id)
-         VALUES ($1, $2, $3, $4, $5, 'ticket', $6)`,
-        [tenant_id, req.file.originalname, `/uploads/${req.file.filename}`, req.file.mimetype, req.file.size, ticketId]
+        `INSERT INTO files (tenant_id, file_name, file_path, file_type, file_size, entity_type, entity_id, uploaded_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [tenant_id, req.file.originalname, `/uploads/${req.file.filename}`, req.file.mimetype, req.file.size, companyId ? 'company' : 'ticket', companyId || ticketId, userId]
       );
     }
 
@@ -1404,6 +1431,161 @@ app.post('/api/public/inquiry', upload.single('pdf'), async (req: express.Reques
   } catch (error) {
     console.error('Public inquiry error:', error);
     res.status(500).json({ success: false, error: 'Failed to process inquiry' });
+  }
+});
+
+// --- Signature & Automated Billing ---
+app.post('/api/portal/sign-proposal', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const { documentId, totalAmount, projectName } = req.body;
+    
+    const companyId = await getCompanyId(userId);
+    if (!companyId) return res.status(403).json({ success: false, error: 'No company association found' });
+
+    // 1. Mark document as signed in metadata
+    await pool.query('UPDATE files SET metadata = jsonb_set(COALESCE(metadata, \'{}\'), \'{signed}\', \'"true"\'::jsonb) WHERE id = $1', [documentId]);
+
+    // 2. Create Deposit Invoice (50%)
+    const depositAmount = parseFloat(totalAmount) * 0.5;
+    const invResult = await pool.query(
+      `INSERT INTO invoices (tenant_id, company_id, title, amount, status, issue_date, due_date, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW(), NOW() + INTERVAL \'14 days\', NOW()) RETURNING *`,
+      [req.user!.tenant_id, companyId, `Anzahlung (50%): ${projectName}`, depositAmount, 'open']
+    );
+
+    // 3. Create Ticket for Admin
+    await pool.query(
+      'INSERT INTO tickets (tenant_id, title, description, company_id, status, priority) VALUES ($1, $2, $3, $4, $5, $6)',
+      [req.user!.tenant_id, `Projekt signiert: ${projectName}`, `Kunde hat das Angebot signiert. Anzahlung wurde generiert (INV-${invResult.rows[0].id.substring(0,6).toUpperCase()}).`, companyId, 'new', 'critical']
+    );
+
+    // 4. Notify Customer
+    await resend.emails.send({
+      from: EMAIL_INFO,
+      to: [req.user!.email],
+      subject: `Projekt gestartet: ${projectName}`,
+      html: `<h3>Vielen Dank für Ihr Vertrauen!</h3><p>Sie haben das Projekt <b>${projectName}</b> erfolgreich signiert. Wir starten nun mit der Vorbereitung.</p><p>Die Anzahlungsrechnung (50%) finden Sie ab sofort in Ihrem Portal.</p>`
+    });
+
+    res.json({ success: true, invoice: invResult.rows[0] });
+  } catch (error) {
+    console.error('Signature error:', error);
+    res.status(500).json({ success: false, error: 'Server error during signature' });
+  }
+});
+
+// --- Swiss QR Helper ---
+const generateSwissQR = async (amount: number, iban: string, reference: string, recipient: any) => {
+  // ISO 20022 Swiss QR Format (SPC)
+  const spc = [
+    'SPC', // Type
+    '0200', // Version
+    '1', // Coding
+    iban.replace(/\s/g, ''), // Account
+    'S', // Recipient Type (Service)
+    recipient.name,
+    recipient.address,
+    recipient.zip + ' ' + recipient.city,
+    '', // Empty
+    '', // Empty
+    'CH', // Country
+    '', // Unused
+    '', // Unused
+    '', // Unused
+    '', // Unused
+    '', // Unused
+    '', // Unused
+    amount.toFixed(2),
+    'CHF',
+    'S', // Debtor Type
+    'Kunde Name',
+    'Strasse 1',
+    '8000 Zürich',
+    '', // Empty
+    '', // Empty
+    'CH',
+    'NON', // Ref Type
+    '', // Ref
+    `INV-${reference}`, // Unstructured Msg
+    'EPD' // End
+  ].join('\r\n');
+
+  return await QRCode.toDataURL(spc, { 
+    errorCorrectionLevel: 'M',
+    margin: 0,
+    width: 200
+  });
+};
+
+app.get('/api/invoices/:id/pdf', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id } = req.params;
+    const inv = await pool.query('SELECT i.*, c.name as company_name FROM invoices i JOIN companies c ON i.company_id = c.id WHERE i.id = $1', [id]);
+    if (inv.rowCount === 0) return res.status(404).send('Invoice not found');
+    
+    const invoice = inv.rows[0];
+    const doc = new jsPDF() as any;
+    
+    // Header & Design
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, 210, 40, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(22);
+    doc.text('HED-IT RECHNUNG', 20, 25);
+    
+    doc.setTextColor(50, 50, 50);
+    doc.setFontSize(10);
+    doc.text(`RECHNUNGS-NR: INV-${invoice.id.substring(0,8).toUpperCase()}`, 140, 55);
+    doc.text(`DATUM: ${new Date(invoice.issue_date).toLocaleDateString('de-CH')}`, 140, 60);
+    
+    doc.setFontSize(12);
+    doc.text('EMPFÄNGER:', 20, 70);
+    doc.setFont('helvetica', 'bold');
+    doc.text(invoice.company_name, 20, 76);
+    
+    // Table
+    (doc as any).autoTable({
+      startY: 90,
+      head: [['Beschreibung', 'Betrag']],
+      body: [[invoice.title, `CHF ${parseFloat(invoice.amount).toFixed(2)}`]],
+      theme: 'striped',
+      headStyles: { fillColor: [30, 41, 59] }
+    });
+    
+    // QR Bill Section (Bottom)
+    const finalY = (doc as any).lastAutoTable.finalY + 20;
+    doc.line(0, 200, 210, 200); // Perforation line
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Zahlteil', 5, 205);
+    doc.text('Empfangsschein', 140, 205);
+    
+    const qrData = await generateSwissQR(
+      parseFloat(invoice.amount), 
+      'CH00 0000 0000 0000 0000 0', // TEST IBAN
+      invoice.id.substring(0,8),
+      { name: 'HED-IT Joel Hediger', address: 'Teststrasse 1', zip: '8000', city: 'Zürich' }
+    );
+    
+    doc.addImage(qrData, 'PNG', 5, 210, 45, 45);
+    
+    doc.setFontSize(8);
+    doc.text('Konto / Zahlbar an:', 55, 215);
+    doc.setFont('helvetica', 'normal');
+    doc.text('CH00 0000 0000 0000 0000 0\nHED-IT Joel Hediger\n8000 Zürich', 55, 220);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Währung / Betrag:', 55, 240);
+    doc.text('CHF ' + parseFloat(invoice.amount).toFixed(2), 55, 245);
+    
+    const pdfOutput = doc.output('arraybuffer');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(Buffer.from(pdfOutput));
+  } catch (error) {
+    console.error('PDF error:', error);
+    res.status(500).send('Error generating PDF');
   }
 });
 
@@ -1915,6 +2097,35 @@ app.post('/api/files/upload', authenticateToken, upload.single('file'), async (r
       ]
     );
     res.status(201).json({ success: true, data: result.rows[0] });
+
+    // --- Email Notification ---
+    try {
+      const isCustomerUpload = req.user!.role === 'customer' || req.user!.role === 'client';
+      const fileName = req.file.originalname;
+
+      if (isCustomerUpload) {
+        // Notify Admin
+        await resend.emails.send({
+          from: EMAIL_INFO,
+          to: [EMAIL_ADMIN_INTERNAL],
+          subject: `Neues Dokument von Kunde: ${fileName}`,
+          html: `<h3>Dokumenten-Upload</h3><p>Der Kunde <b>${req.user!.email}</b> hat ein neues Dokument hochgeladen: <b>${fileName}</b></p>`
+        });
+      } else if (entity_type === 'company' && entity_id) {
+        // Notify Customer Contacts
+        const contactsResult = await pool.query('SELECT email, first_name FROM contacts WHERE company_id = $1 AND email IS NOT NULL', [entity_id]);
+        for (const contact of contactsResult.rows) {
+          await resend.emails.send({
+            from: EMAIL_INFO,
+            to: [contact.email],
+            subject: `Neues Dokument für Sie verfügbar: ${fileName}`,
+            html: `<h3>Hallo ${contact.first_name}</h3><p>Wir haben ein neues Dokument für Sie im Portal hochgeladen: <b>${fileName}</b></p><p>Sie finden es ab sofort in Ihrem Dokumenten-Center.</p><br><a href="https://portal.hed-it.ch/portal/documents">Zum Portal</a>`
+          });
+        }
+      }
+    } catch (mailErr) {
+      console.error('Failed to send upload notification email:', mailErr);
+    }
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({ success: false, error: 'Upload failed' });
@@ -2594,8 +2805,10 @@ app.get('/api/portal/invoices', authenticateToken, async (req: AuthenticatedRequ
     const companyId = await getCompanyId(userId);
     if (!companyId) return res.json({ success: true, data: [] });
 
-    const result = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY due_date DESC', [companyId]);
-    res.json({ success: true, data: result.rows });
+    const result = await pool.query('SELECT * FROM invoices WHERE company_id = $1 ORDER BY created_at DESC', [companyId]);
+    // Ensure amount is string/number for the frontend
+    const cleaned = result.rows.map(r => ({ ...r, amount: r.amount || 0 }));
+    res.json({ success: true, data: cleaned });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
   }

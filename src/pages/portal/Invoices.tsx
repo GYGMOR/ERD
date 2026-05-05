@@ -98,13 +98,24 @@ export const Invoices = () => {
                       {parseFloat(inv.amount).toLocaleString('de-CH', { minimumFractionDigits: 2 })} CHF
                     </td>
                     <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                          <button className="btn-secondary" style={{ padding: 6, borderRadius: 6 }} title="Download PDF">
+                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: 6, borderRadius: 6 }} 
+                            title="Download PDF"
+                            onClick={() => window.open(`/api/invoices/${inv.id}/pdf`, '_blank')}
+                          >
                              <Download size={14} />
                           </button>
-                          <button className="btn-secondary" style={{ padding: 6, borderRadius: 6 }} title="Online bezahlen">
-                             <ExternalLink size={14} />
-                          </button>
+                          {(inv.status === 'open' || inv.status === 'sent') && (
+                            <button 
+                              className="btn-primary" 
+                              style={{ padding: '6px 12px', fontSize: 11, fontWeight: 700 }}
+                              onClick={() => alert('Demo-Zahlung wird gestartet (TWINT / Apple Pay)...')}
+                            >
+                               Bezahlen
+                            </button>
+                          )}
                        </div>
                     </td>
                   </tr>
