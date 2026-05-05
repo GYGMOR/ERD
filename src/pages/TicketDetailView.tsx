@@ -104,8 +104,10 @@ export const TicketDetailView = () => {
         priority, 
         assignee_id: assigneeId === '' ? null : assigneeId 
       });
-      if (res.success) {
+      if (res.success && res.data) {
         setSaveSuccess(true);
+        // Update local ticket state to reflect changes immediately
+        setTicket(res.data);
         setTimeout(() => setSaveSuccess(false), 2500);
       } else {
         setError(res.error || 'Fehler beim Speichern.');

@@ -1161,18 +1161,28 @@ app.get('/api/tickets/:id', async (req: express.Request, res: express.Response) 
   }
 });
 
-app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response) => {
+app.patch('/api/tickets/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
-  const { status, priority, assignee_id, title, description } = req.body;
+  const { tenant_id } = req.user!;
+  console.log(`[DEBUG] Updating ticket ${id} for tenant ${tenant_id}. Body:`, req.body);
+  
   try {
     let setClauses = [];
     let values = [];
     let i = 1;
 
+    // Allowed fields to update
+    const allowedFields = ['status', 'priority', 'assignee_id', 'title', 'description', 'type', 'company_id', 'customer_id'];
+
     for (const [key, value] of Object.entries(req.body)) {
-      if (['status', 'priority', 'assignee_id', 'title', 'description'].includes(key)) {
+      if (allowedFields.includes(key)) {
         setClauses.push(`${key} = $${i}`);
-        values.push(value);
+        // Convert empty string to null for UUID fields
+        if (key === 'assignee_id' && value === '') {
+          values.push(null);
+        } else {
+          values.push(value);
+        }
         i++;
       }
     }
@@ -1181,8 +1191,10 @@ app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response
 
     setClauses.push(`updated_at = NOW()`);
     values.push(id);
+    values.push(tenant_id);
 
-    const query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} RETURNING *`;
+    const query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} AND tenant_id = $${i+1} RETURNING *`;
+    console.log(`[DEBUG] Executing query: ${query} with values:`, values);
     
     const result = await pool.query(query, values);
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
