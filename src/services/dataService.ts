@@ -81,6 +81,7 @@ export const dataService = {
     } catch (error: any) {
       return { success: false, error: error.message };
     }
+  },
   async reset2FA(id: string) {
     try {
       const data = await fetch(`${API_BASE}/admin/users/${id}/reset-2fa`, {
