@@ -21,7 +21,8 @@ export const Contracts = () => {
   }, []);
 
   const getStatusBadge = (status: string) => {
-    switch (status.toLowerCase()) {
+    const s = (status || 'active').toLowerCase();
+    switch (s) {
       case 'active': return <span className="badge success">Aktiv</span>;
       case 'cancelled': return <span className="badge danger">Gekündigt</span>;
       case 'expired': return <span className="badge warning">Abgelaufen</span>;
