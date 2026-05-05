@@ -2833,9 +2833,37 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
     const companyId = await getCompanyId(userId);
     if (!companyId) return res.json({ success: true, data: [] });
 
-    const result = await pool.query('SELECT * FROM contracts WHERE company_id = $1 ORDER BY start_date DESC', [companyId]);
-    res.json({ success: true, data: result.rows });
+    // Fetch structured contracts
+    const contractsRes = await pool.query('SELECT *, \'contract\' as source FROM contracts WHERE company_id = $1 ORDER BY start_date DESC', [companyId]);
+    
+    // Fetch uploaded files linked to company (that might be contracts)
+    const filesRes = await pool.query('SELECT *, \'file\' as source FROM files WHERE entity_type = \'company\' AND entity_id = $1 ORDER BY created_at DESC', [companyId]);
+
+    // Merge them (structured first, then files)
+    const merged = [
+      ...contractsRes.rows.map(c => ({
+        id: c.id,
+        name: c.service_name || c.name,
+        type: c.type || 'Service',
+        status: c.status,
+        date: c.start_date,
+        source: 'contract',
+        amount: c.monthly_price || 0
+      })),
+      ...filesRes.rows.map(f => ({
+        id: f.id,
+        name: f.file_name,
+        type: 'Dokument',
+        status: 'active',
+        date: f.created_at,
+        source: 'file',
+        path: f.file_path
+      }))
+    ];
+
+    res.json({ success: true, data: merged });
   } catch (error) {
+    console.error('Portal: Error fetching contracts/files:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });

@@ -56,35 +56,47 @@ export const Contracts = () => {
             <div 
               key={contract.id} 
               className="card hover-bg-row"
-              style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--spacing-lg)', gap: 24, flexWrap: 'wrap', borderLeft: '4px solid var(--color-primary)' }}
+              style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 'var(--spacing-lg)', gap: 24, flexWrap: 'wrap', borderLeft: `4px solid ${contract.source === 'file' ? 'var(--color-danger)' : 'var(--color-primary)'}` }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-                 <div style={{ width: 56, height: 56, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-hover)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid var(--color-border)' }}>
+                 <div style={{ width: 56, height: 56, borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-surface-hover)', color: contract.source === 'file' ? 'var(--color-danger)' : 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: '1px solid var(--color-border)' }}>
                     <ShieldCheck size={28} strokeWidth={1.5} />
                  </div>
                  <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
                        <h3 style={{ margin: 0, fontSize: 17, fontWeight: 800, color: 'var(--color-text-main)', letterSpacing: '-0.02em' }}>
-                         {contract.title}
+                         {contract.name || contract.title}
                        </h3>
-                       {getStatusBadge(contract.status)}
+                       {contract.source === 'file' ? <span className="badge info">Dokument</span> : getStatusBadge(contract.status)}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11, color: 'var(--color-text-muted)' }}>
-                       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Calendar size={12} /> Start: {new Date(contract.start_date).toLocaleDateString()}</span>
-                       {contract.end_date && <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Clock size={12} /> Ende: {new Date(contract.end_date).toLocaleDateString()}</span>}
+                       <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Calendar size={12} /> {contract.source === 'file' ? 'Hochgeladen:' : 'Start:'} {new Date(contract.date).toLocaleDateString()}</span>
+                       {contract.source === 'contract' && contract.payment_cycle && <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Clock size={12} /> Zyklus: {contract.payment_cycle}</span>}
                     </div>
                  </div>
               </div>
 
               <div style={{ flex: 1, minWidth: 200, textAlign: 'center' }}>
-                 <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Monatlicher Fixpreis</p>
-                 <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: 'var(--color-primary)' }}>CHF {parseFloat(contract.monthly_value || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}</p>
-                 <p style={{ margin: '4px 0 0 0', fontSize: 10, color: 'var(--color-text-muted)' }}>Nächste Abrechnung: 01.{new Date().getMonth() + 2 > 9 ? new Date().getMonth() + 2 : `0${new Date().getMonth() + 2}`}.2026</p>
+                 <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{contract.source === 'file' ? 'Dateityp' : 'Monatlicher Fixpreis'}</p>
+                 <p style={{ margin: 0, fontSize: 22, fontWeight: 800, color: contract.source === 'file' ? 'var(--color-text-main)' : 'var(--color-primary)' }}>
+                   {contract.source === 'file' ? 'PDF Dokument' : `CHF ${parseFloat(contract.amount || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}`}
+                 </p>
+                 {contract.source === 'contract' && <p style={{ margin: '4px 0 0 0', fontSize: 10, color: 'var(--color-text-muted)' }}>Nächste Abrechnung: 01.{new Date().getMonth() + 2 > 9 ? new Date().getMonth() + 2 : `0${new Date().getMonth() + 2}`}.2026</p>}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                 <button className="btn-secondary" style={{ padding: '8px 20px', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Download size={14} /> Vertrag PDF
+                 <button 
+                   className="btn-secondary" 
+                   style={{ padding: '8px 20px', fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}
+                   onClick={() => {
+                     if (contract.source === 'file' && contract.path) {
+                       window.open(contract.path, '_blank');
+                     } else {
+                       alert('Vertrags-PDF wird generiert...');
+                     }
+                   }}
+                 >
+                    <Download size={14} /> {contract.source === 'file' ? 'Download' : 'Vertrag PDF'}
                  </button>
                  <button className="btn-secondary" style={{ padding: 8, display: 'flex' }}>
                     <ExternalLink size={16} />
