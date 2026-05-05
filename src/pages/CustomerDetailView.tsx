@@ -284,7 +284,7 @@ export const CustomerDetailView = () => {
                   onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'var(--shadow-sm)'; }}
                 >
                   <div style={{ width: 44, height: 44, borderRadius: '50%', backgroundColor: avatarColor(c.id), display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
-                    {c.first_name.charAt(0)}{c.last_name.charAt(0)}
+                    {(c.first_name || '?').charAt(0)}{(c.last_name || '').charAt(0)}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 15 }}>{c.first_name} {c.last_name}</div>

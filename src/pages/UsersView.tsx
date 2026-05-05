@@ -136,11 +136,12 @@ export const UsersView = () => {
     // Search
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter(u => 
-        u.first_name.toLowerCase().includes(q) || 
-        u.last_name.toLowerCase().includes(q) || 
-        u.email.toLowerCase().includes(q)
-      );
+      result = result.filter(u => {
+        const first = (u.first_name || '').toLowerCase();
+        const last = (u.last_name || '').toLowerCase();
+        const email = (u.email || '').toLowerCase();
+        return first.includes(q) || last.includes(q) || email.includes(q);
+      });
     }
 
     // Role Filter
@@ -157,7 +158,11 @@ export const UsersView = () => {
     // Sort
     result.sort((a, b) => {
       let comparison = 0;
-      if (sortBy === 'name') comparison = `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`);
+      if (sortBy === 'name') {
+        const nameA = `${a.first_name || ''} ${a.last_name || ''}`.trim() || 'Unbekannt';
+        const nameB = `${b.first_name || ''} ${b.last_name || ''}`.trim() || 'Unbekannt';
+        comparison = nameA.localeCompare(nameB);
+      }
       else if (sortBy === 'role') comparison = a.role.localeCompare(b.role);
       else if (sortBy === 'created_at') comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       
@@ -225,7 +230,7 @@ export const UsersView = () => {
     }
   };
 
-  const initials = (u: User) => `${u.first_name.charAt(0)}${u.last_name.charAt(0)}`.toUpperCase();
+  const initials = (u: User) => `${(u.first_name || '?').charAt(0)}${(u.last_name || '').charAt(0)}`.toUpperCase();
   const COLORS = ['var(--color-primary)', 'var(--color-success)', '#8b5cf6', '#ec4899', 'var(--color-warning)', 'var(--color-info)'];
   const avatarColor = (id: string) => COLORS[id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
 

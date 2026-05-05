@@ -4,8 +4,8 @@ import { NewContactModal } from '../components/NewContactModal';
 import { dataService } from '../services/dataService';
 import type { Contact } from '../types/entities';
 
-const getInitials = (first: string, last: string) =>
-  `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
+const getInitials = (first: string | null | undefined, last: string | null | undefined) =>
+  `${(first || '?').charAt(0)}${(last || '').charAt(0)}`.toUpperCase();
 
 const AVATAR_COLORS = [
   'var(--color-primary)',
@@ -146,12 +146,18 @@ export const ContactsView = () => {
 
   const filtered = contacts.filter(c => {
     const q = search.toLowerCase();
+    const first = (c.first_name || '').toLowerCase();
+    const last = (c.last_name || '').toLowerCase();
+    const email = (c.email || '').toLowerCase();
+    const company = (c.company_name || '').toLowerCase();
+    const role = (c.role || '').toLowerCase();
+    
     return (
-      c.first_name.toLowerCase().includes(q) ||
-      c.last_name.toLowerCase().includes(q) ||
-      (c.email || '').toLowerCase().includes(q) ||
-      (c.company_name || '').toLowerCase().includes(q) ||
-      (c.role || '').toLowerCase().includes(q)
+      first.includes(q) ||
+      last.includes(q) ||
+      email.includes(q) ||
+      company.includes(q) ||
+      role.includes(q)
     );
   });
 
