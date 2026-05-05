@@ -11,6 +11,7 @@ interface User {
   email: string;
   role: string;
   is_active: boolean;
+  last_device?: string;
   created_at: string;
   updated_at: string;
 }
@@ -308,7 +309,17 @@ export const UsersView = () => {
                     </div>
                     <div style={{ textAlign: 'left' }}>
                       <div style={{ fontWeight: 600, fontSize: 14 }}>{u.first_name} {u.last_name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{u.id.substring(0, 8)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                        <span>{u.id.substring(0, 8)}</span>
+                        {u.last_device && (
+                          <span style={{ backgroundColor: 'var(--color-surface-hover)', padding: '2px 6px', borderRadius: 4, fontSize: 10 }}>
+                            {u.last_device.includes('iPhone') ? '📱 iPhone' : 
+                             u.last_device.includes('Android') ? '📱 Android' : 
+                             u.last_device.includes('Windows') ? '💻 Windows' : 
+                             u.last_device.includes('Macintosh') ? '💻 Mac' : '🌐 ' + u.last_device.substring(0, 15)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </td>

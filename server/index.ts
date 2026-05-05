@@ -106,8 +106,21 @@ const authorizeRole = (...roles: string[]) => {
 
 // Database connection
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@db:5432/postgres'
 });
+
+// Database Migrations / Schema Checks
+async function runMigrations() {
+  try {
+    // Add last_device to users
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device TEXT');
+    // Ensure companies can have multiple contacts or linked correctly
+    console.log('[INFO] Database schema verified.');
+  } catch (err) {
+    console.error('[CRITICAL] Migration failed:', err);
+  }
+}
+runMigrations();
 
 // Test DB connection
 pool.query('SELECT NOW()', (err: Error | null) => {
@@ -412,7 +425,7 @@ app.post('/api/auth/forgot-password', async (req: express.Request, res: express.
 
     const resetLink = `${process.env.APP_URL || 'https://hed-it.ch'}/reset-password?token=${resetToken}`;
 
-    await resend.emails.send({
+    const sendResult = await resend.emails.send({
       from: EMAIL_NO_REPLY,
       to: [email],
       subject: 'Passwort zurücksetzen',
@@ -427,6 +440,7 @@ app.post('/api/auth/forgot-password', async (req: express.Request, res: express.
         </div>
       `
     });
+    console.log('[DEBUG] Password reset email sent. Result:', sendResult);
 
     res.status(200).json({ success: true, message: 'Link zum Zurücksetzen gesendet.' });
   } catch (error) {
@@ -471,7 +485,7 @@ app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: 
     const { tenant_id } = req.user!;
     const { includeCustomers } = req.query;
     
-    let query = 'SELECT id, tenant_id, first_name, last_name, email, role, is_active, created_at, updated_at FROM users WHERE tenant_id = $1';
+    let query = 'SELECT id, tenant_id, first_name, last_name, email, role, is_active, last_device, created_at, updated_at FROM users WHERE tenant_id = $1';
     
     if (includeCustomers !== 'true') {
       // By default, maybe we show all? 
@@ -667,6 +681,10 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
     const isValid = await verify({ token: code, secret: user.two_factor_secret });
     
     if (!isValid) return res.status(401).json({ success: false, error: 'Ungültiger 2FA Code' });
+
+    // Store device info
+    const userAgent = req.headers['user-agent'] || 'Unbekanntes Gerät';
+    await pool.query('UPDATE users SET last_device = $1 WHERE id = $2', [userAgent, user.id]);
 
     const token = jwt.sign(
       { 
@@ -2679,20 +2697,20 @@ app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedReq
   const { id: userId, tenant_id } = req.user!;
 
   try {
+    console.log('[DEBUG] Profile update request:', { userId, tenant_id, firstName, lastName, companyName });
+    
     // 1. Update User & Contact
     await pool.query('UPDATE users SET first_name = $1, last_name = $2 WHERE id = $3', [firstName, lastName, userId]);
+    
     const contactUpdate = await pool.query(
       'UPDATE contacts SET first_name = $1, last_name = $2, phone = $3 WHERE user_id = $4 RETURNING company_id',
       [firstName, lastName, phone, userId]
     );
 
-    let companyId = null;
-    let contactExists = contactUpdate.rows.length > 0;
+    let companyId = contactUpdate.rows.length > 0 ? contactUpdate.rows[0].company_id : null;
 
-    if (contactExists) {
-      companyId = contactUpdate.rows[0].company_id;
-    } else {
-      // Create contact if it doesn't exist (e.g., admin users)
+    if (contactUpdate.rows.length === 0) {
+      // Create contact if it doesn't exist
       const newContact = await pool.query(
         'INSERT INTO contacts (tenant_id, user_id, first_name, last_name, phone) VALUES ($1, $2, $3, $4, $5) RETURNING id',
         [tenant_id, userId, firstName, lastName, phone]
@@ -2705,10 +2723,11 @@ app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedReq
         'UPDATE companies SET name = $1, website = $2, industry = $3, address = $4 WHERE id = $5',
         [companyName || `${firstName} ${lastName}`, website || '', industry || '', address || '', companyId]
       );
-    } else if (companyName) {
+    } else if (companyName || website || industry || address) {
+      // Only create company if at least some info is provided
       const newCompany = await pool.query(
         'INSERT INTO companies (tenant_id, name, website, industry, address) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-        [tenant_id, companyName, website || '', industry || '', address || '']
+        [tenant_id, companyName || `${firstName} ${lastName}`, website || '', industry || '', address || '']
       );
       companyId = newCompany.rows[0].id;
       await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, userId]);
@@ -2716,7 +2735,7 @@ app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedReq
 
     res.json({ success: true, message: 'Profil erfolgreich aktualisiert.' });
   } catch (error) {
-    console.error('Profile update error:', error);
+    console.error('[CRITICAL] Profile update error:', error);
     res.status(500).json({ success: false, error: 'Server error updating profile' });
   }
 });
