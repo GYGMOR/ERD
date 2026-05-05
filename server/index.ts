@@ -701,8 +701,8 @@ app.post('/api/auth/2fa/enable', authenticateToken, async (req: AuthenticatedReq
     const userResult = await pool.query('SELECT two_factor_secret FROM users WHERE id = $1', [id]);
     const secret = userResult.rows[0].two_factor_secret;
     
-    const isValid = await verify({ token: code, secret });
-    if (!isValid.valid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
+    const isValid = verify({ token: code, secret });
+    if (!isValid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
     
     await pool.query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [id]);
     res.json({ success: true, message: '2FA erfolgreich aktiviert' });
@@ -2690,12 +2690,12 @@ app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedReq
     if (companyId) {
       await pool.query(
         'UPDATE companies SET name = $1, website = $2, industry = $3, address = $4 WHERE id = $5',
-        [companyName, website, industry, address, companyId]
+        [companyName || `${firstName} ${lastName}`, website || '', industry || '', address || '', companyId]
       );
-    } else {
+    } else if (companyName) {
       const newCompany = await pool.query(
         'INSERT INTO companies (tenant_id, name, website, industry, address) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-        [tenant_id, companyName, website, industry, address]
+        [tenant_id, companyName, website || '', industry || '', address || '']
       );
       companyId = newCompany.rows[0].id;
       await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, userId]);
