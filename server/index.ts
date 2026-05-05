@@ -250,7 +250,14 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
 
     // Generate JWT
     const token = jwt.sign(
-      { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
+      { 
+        id: user.id, 
+        tenant_id: user.tenant_id, 
+        role: user.role, 
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -650,7 +657,14 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
     if (!isValid) return res.status(401).json({ success: false, error: 'Ungültiger 2FA Code' });
 
     const token = jwt.sign(
-      { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
+      { 
+        id: user.id, 
+        tenant_id: user.tenant_id, 
+        role: user.role, 
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -727,7 +741,14 @@ app.post('/api/auth/msal-sync', async (req: express.Request, res: express.Respon
 
     // 3. Generate local JWT
     const token = jwt.sign(
-      { id: user.id, tenant_id: user.tenant_id, role: user.role, email: user.email },
+      { 
+        id: user.id, 
+        tenant_id: user.tenant_id, 
+        role: user.role, 
+        email: user.email,
+        firstName: user.first_name,
+        lastName: user.last_name
+      },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -772,7 +793,8 @@ app.get('/api/tickets/:id/comments', async (req: express.Request, res: express.R
 
 app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
-  const { body, is_internal } = req.body;
+  const body = req.body.body || req.body.message;
+  const { is_internal } = req.body;
   const authReq = req as AuthenticatedRequest;
   const userId = authReq.user!.id;
   const tenant_id = authReq.user!.tenant_id;
@@ -799,11 +821,12 @@ app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Req
       
       if (ticketInfo.rows.length > 0) {
         const { email, first_name, title } = ticketInfo.rows[0];
-        try {
-          await resend.emails.send({
-            from: EMAIL_INFO,
-            to: [email],
-            subject: `Update zu Ihrem Ticket: ${title}`,
+        if (email && email.includes('@')) {
+          try {
+            await resend.emails.send({
+              from: EMAIL_INFO,
+              to: [email],
+              subject: `Update zu Ihrem Ticket: ${title}`,
             html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
                 <h3>Hallo ${first_name},</h3>
@@ -2449,7 +2472,7 @@ app.get('/api/portal/tickets/:id', authenticateToken, async (req: AuthenticatedR
 
 app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
-  const { message } = req.body;
+  const message = req.body.message || req.body.body;
   const { id: userId, tenant_id, firstName, lastName } = req.user!;
 
   try {
@@ -2477,7 +2500,7 @@ app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: Auth
 
         // Send Email to Assignee
         const assignee = await pool.query('SELECT email FROM users WHERE id = $1', [check.rows[0].assignee_id]);
-        if (assignee.rows.length > 0) {
+        if (assignee.rows.length > 0 && assignee.rows[0].email && assignee.rows[0].email.includes('@')) {
           try {
             await resend.emails.send({
               from: EMAIL_INFO,
