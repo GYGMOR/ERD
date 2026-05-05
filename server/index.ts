@@ -10,12 +10,9 @@ import multer from 'multer';
 import fs from 'fs-extra';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { authenticator } = require('otplib');
+import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
-import nodemailer from 'nodemailer';
-
-
-
+import { Resend } from 'resend';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,16 +27,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
 app.use(cors());
 app.use(express.json());
 
-// SMTP Transporter Setup
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'localhost',
-  port: parseInt(process.env.SMTP_PORT || '587', 10),
-  secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+// Resend Email Setup
+const resend = new Resend(process.env.RESEND_API_KEY || '');
+const EMAIL_NO_REPLY = 'HED-IT <no-reply@hed-it.ch>';
+const EMAIL_INFO = 'HED-IT <info@hed-it.ch>';
+const EMAIL_ADMIN_INTERNAL = 'joel.hediger@hed-it.ch';
 
 // Serve static files from the frontend build directory
 const distPath = path.join(__dirname, '../dist');
@@ -348,6 +340,26 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
       link: `/tickets/${ticketResult.rows[0].id}`
     });
 
+    // INTERNAL EMAIL NOTIFICATION
+    try {
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: [EMAIL_ADMIN_INTERNAL],
+        subject: `NEUE REGISTRIERUNG: ${firstName} ${lastName}`,
+        html: `
+          <div style="font-family: sans-serif;">
+            <h2>Neue Registrierung im Portal</h2>
+            <p>Ein neuer Benutzer hat sich registriert und wartet auf Freischaltung:</p>
+            <ul>
+              <li><strong>Name:</strong> ${firstName} ${lastName}</li>
+              <li><strong>E-Mail:</strong> ${email}</li>
+            </ul>
+            <a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Zum Ticket</a>
+          </div>
+        `
+      });
+    } catch (err) { console.error('Failed to send registration info email:', err); }
+
     // Also notify employees
     await createNotification({
       tenant_id: tenantId,
@@ -389,9 +401,9 @@ app.post('/api/auth/forgot-password', async (req: express.Request, res: express.
 
     const resetLink = `${process.env.APP_URL || 'https://hed-it.ch'}/reset-password?token=${resetToken}`;
 
-    await transporter.sendMail({
-      from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
-      to: email,
+    await resend.emails.send({
+      from: EMAIL_NO_REPLY,
+      to: [email],
       subject: 'Passwort zurücksetzen',
       html: `
         <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
@@ -441,6 +453,85 @@ app.post('/api/auth/reset-password', async (req: express.Request, res: express.R
   }
 });
 
+// --- USERS MANAGEMENT ---
+
+app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const { includeCustomers } = req.query;
+    
+    let query = 'SELECT id, tenant_id, first_name, last_name, email, role, is_active, created_at, updated_at FROM users WHERE tenant_id = $1';
+    
+    if (includeCustomers !== 'true') {
+      // By default, maybe we show all? 
+      // The frontend uses includeCustomers=true when they want clients, but actually they might just want all.
+      // Let's just return all users for this tenant for now, but ordered by created_at.
+    }
+    query += ' ORDER BY created_at DESC';
+
+    const result = await pool.query(query, [tenant_id]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ success: false, error: 'Server error fetching users' });
+  }
+});
+
+app.post('/api/users', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { first_name, last_name, email, role, password, tenant_id } = req.body;
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (existing.rows.length > 0) return res.status(400).json({ success: false, error: 'E-Mail bereits verwendet.' });
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO users (tenant_id, first_name, last_name, email, role, password_hash, is_active) 
+       VALUES ($1, $2, $3, $4, $5, $6, true) RETURNING id, first_name, last_name, email, role, is_active, created_at`,
+      [tenant_id || req.user!.tenant_id, first_name, last_name, email, role || 'employee', passwordHash]
+    );
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    res.status(500).json({ success: false, error: 'Server error creating user' });
+  }
+});
+
+app.patch('/api/users/:id', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+    const { tenant_id } = req.user!;
+
+    let setClauses = [];
+    let values = [];
+    let i = 1;
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (['first_name', 'last_name', 'email', 'role', 'is_active'].includes(key)) {
+        setClauses.push(`${key} = $${i}`);
+        values.push(value);
+        i++;
+      }
+    }
+
+    if (setClauses.length === 0) return res.status(400).json({ success: false, error: 'No fields to update' });
+
+    values.push(id);
+    values.push(tenant_id);
+
+    const query = `UPDATE users SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $${i-1} AND tenant_id = $${i} RETURNING id, first_name, last_name, email, role, is_active, created_at`;
+    
+    const result = await pool.query(query, values);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ success: false, error: 'Server error updating user' });
+  }
+});
+
 // Admin Route: Approve User
 app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
@@ -459,9 +550,9 @@ app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin
 
     // Send Approval Email (Try-catch to prevent blocking approval if SMTP is not configured)
     try {
-      await transporter.sendMail({
-        from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
-        to: email,
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: [email],
         subject: 'Dein Konto wurde freigeschaltet!',
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
@@ -491,7 +582,35 @@ app.post('/api/admin/users/:id/reject', authenticateToken, authorizeRole('admin'
   const { id } = req.params;
 
   try {
+    // Fetch user info before deletion for the email
+    const userResult = await pool.query('SELECT email, first_name FROM users WHERE id = $1', [id]);
+    
+    if (userResult.rows.length > 0) {
+      const { email, first_name } = userResult.rows[0];
+      
+      // Send Rejection Email
+      try {
+        await resend.emails.send({
+          from: EMAIL_INFO,
+          to: [email],
+          subject: 'Information zu deiner Registrierung bei HED-IT',
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2>Hallo ${first_name},</h2>
+              <p>Vielen Dank für dein Interesse an unserem Kundenportal.</p>
+              <p>Leider konnten wir deine Registrierung nach einer internen Prüfung aktuell nicht freischalten.</p>
+              <p>Solltest du Fragen dazu haben, kannst du uns gerne unter info@hed-it.ch kontaktieren.</p>
+              <p>Beste Grüße,<br>Dein HED-IT Team</p>
+            </div>
+          `
+        });
+      } catch (mailError) {
+        console.error('Failed to send rejection email:', mailError);
+      }
+    }
+
     // Delete user and all associated data (contacts, etc.)
+    await pool.query('DELETE FROM contacts WHERE user_id = $1', [id]);
     await pool.query('DELETE FROM users WHERE id = $1 AND is_active = false', [id]);
     
     // Close the related registration ticket
@@ -531,9 +650,9 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
 // 2FA: Setup (Request secret and QR)
 app.post('/api/auth/2fa/setup', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id, email } = req.user!;
-  const secret = authenticator.generateSecret();
+  const secret = generateSecret();
   // Set service name and user email for better app identification
-  const otpauth = authenticator.keyuri(email, 'HED-IT', secret);
+  const otpauth = generateURI({ secret, label: email, issuer: 'HED-IT' });
   
   try {
     const qrCodeUrl = await QRCode.toDataURL(otpauth);
@@ -554,12 +673,13 @@ app.post('/api/auth/2fa/enable', authenticateToken, async (req: AuthenticatedReq
     const userResult = await pool.query('SELECT two_factor_secret FROM users WHERE id = $1', [id]);
     const secret = userResult.rows[0].two_factor_secret;
     
-    const isValid = authenticator.verify({ token: code, secret });
-    if (!isValid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
+    const isValid = await verify({ token: code, secret });
+    if (!isValid.valid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
     
     await pool.query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [id]);
     res.json({ success: true, message: '2FA erfolgreich aktiviert' });
   } catch (error) {
+    console.error('2FA Enable Error:', error);
     res.status(500).json({ success: false, error: 'Failed to enable 2FA' });
   }
 });
@@ -666,9 +786,9 @@ app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Req
       if (ticketInfo.rows.length > 0) {
         const { email, first_name, title } = ticketInfo.rows[0];
         try {
-          await transporter.sendMail({
-            from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
-            to: email,
+          await resend.emails.send({
+            from: EMAIL_INFO,
+            to: [email],
             subject: `Update zu Ihrem Ticket: ${title}`,
             html: `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1008,18 +1128,27 @@ app.patch('/api/tickets/:id', async (req: express.Request, res: express.Response
   const { id } = req.params;
   const { status, priority, assignee_id, title, description } = req.body;
   try {
-    const result = await pool.query(
-      `UPDATE tickets SET 
-        status = COALESCE($1, status),
-        priority = COALESCE($2, priority),
-        assignee_id = COALESCE($3, assignee_id),
-        title = COALESCE($4, title),
-        description = COALESCE($5, description),
-        updated_at = NOW()
-       WHERE id = $6 RETURNING *`,
-      [status, priority, assignee_id, title, description, id]
-    );
-    if (result.rowCount === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+    let setClauses = [];
+    let values = [];
+    let i = 1;
+
+    for (const [key, value] of Object.entries(req.body)) {
+      if (['status', 'priority', 'assignee_id', 'title', 'description'].includes(key)) {
+        setClauses.push(`${key} = $${i}`);
+        values.push(value);
+        i++;
+      }
+    }
+
+    if (setClauses.length === 0) return res.status(400).json({ success: false, error: 'No fields to update' });
+
+    setClauses.push(`updated_at = NOW()`);
+    values.push(id);
+
+    const query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} RETURNING *`;
+    
+    const result = await pool.query(query, values);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
     
     // Notification for assignment change
     if (assignee_id && typeof assignee_id === 'string') {
@@ -1094,6 +1223,24 @@ app.post('/api/tickets', authenticateToken, async (req: AuthenticatedRequest, re
       link: `/tickets/${result.rows[0].id}`
     });
 
+    // INTERNAL EMAIL NOTIFICATION
+    try {
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: [EMAIL_ADMIN_INTERNAL],
+        subject: `NEUES TICKET: ${title}`,
+        html: `
+          <div style="font-family: sans-serif;">
+            <h2>Ein neues Ticket wurde erstellt</h2>
+            <p><strong>Titel:</strong> ${title}</p>
+            <p><strong>Priorität:</strong> ${priority || 'normal'}</p>
+            <p><strong>Beschreibung:</strong> ${description || 'Keine'}</p>
+            <a href="https://tool.hed-it.ch/tickets/${result.rows[0].id}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Ticket öffnen</a>
+          </div>
+        `
+      });
+    } catch (err) { console.error('Failed to send internal ticket notification:', err); }
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating ticket:', error);
@@ -1139,6 +1286,23 @@ app.post('/api/public/inquiry', upload.single('pdf'), async (req: express.Reques
       priority: 'normal',
       link: `/tickets/${ticketId}`
     });
+
+    // INTERNAL EMAIL NOTIFICATION
+    try {
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: [EMAIL_ADMIN_INTERNAL],
+        subject: `WEB-ANFRAGE: ${subject}`,
+        html: `
+          <div style="font-family: sans-serif;">
+            <h2>Neue Anfrage über die Webseite</h2>
+            <p><strong>Betreff:</strong> ${subject}</p>
+            <p><strong>Details:</strong> ${details || 'Keine'}</p>
+            <a href="https://tool.hed-it.ch/tickets/${ticketId}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px;">Zum Ticket</a>
+          </div>
+        `
+      });
+    } catch (err) { console.error('Failed to send internal inquiry notification:', err); }
 
     res.status(201).json({ success: true, ticketId });
   } catch (error) {
@@ -2301,9 +2465,9 @@ app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: Auth
         const assignee = await pool.query('SELECT email FROM users WHERE id = $1', [check.rows[0].assignee_id]);
         if (assignee.rows.length > 0) {
           try {
-            await transporter.sendMail({
-              from: `"HED-IT Portal" <${process.env.SMTP_USER}>`,
-              to: assignee.rows[0].email,
+            await resend.emails.send({
+              from: EMAIL_INFO,
+              to: [assignee.rows[0].email],
               subject: `Kunden-Antwort: ${check.rows[0].title}`,
               html: `<p>Der Kunde <b>${firstName} ${lastName}</b> hat auf das Ticket "${check.rows[0].title}" geantwortet:</p><p><i>${message}</i></p><a href="https://tool.hed-it.ch/tickets/${id}">Im Admin-Tool ansehen</a>`
             });
@@ -2413,9 +2577,9 @@ app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: Authent
 
     // Send Email to Admin
     try {
-      await transporter.sendMail({
-        from: `"HED-IT Portal" <${process.env.SMTP_USER}>`,
-        to: process.env.SMTP_USER, // Internal mail
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: ['info@hed-it.ch'], // Internal mail
         subject: `NEUE BUCHUNG: ${serviceName} von ${firstName} ${lastName}`,
         html: `<h3>Neue Buchung im Portal</h3><p>Kunde: ${firstName} ${lastName}</p><p>Service: ${serviceName}</p><p>Preis: ${price} (${type})</p><a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}">Ticket öffnen</a>`
       });
@@ -2460,7 +2624,18 @@ app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedReq
       [firstName, lastName, phone, userId]
     );
 
-    let companyId = contactUpdate.rows[0].company_id;
+    let companyId = null;
+    let contactExists = contactUpdate.rows.length > 0;
+
+    if (contactExists) {
+      companyId = contactUpdate.rows[0].company_id;
+    } else {
+      // Create contact if it doesn't exist (e.g., admin users)
+      const newContact = await pool.query(
+        'INSERT INTO contacts (tenant_id, user_id, first_name, last_name, phone) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+        [tenant_id, userId, firstName, lastName, phone]
+      );
+    }
 
     // 2. Update or Create Company
     if (companyId) {

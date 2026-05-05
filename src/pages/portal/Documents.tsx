@@ -3,7 +3,7 @@ import { getUser } from '../../utils/auth';
 
 export const Documents = () => {
   const user = getUser();
-  
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xl)' }}>
       <div>

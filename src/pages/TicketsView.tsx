@@ -95,7 +95,8 @@ export const TicketsView = () => {
       // Inbox Logic
       if (currentView === 'meine' && t.assignee_id !== currentUser?.id) return false;
       if (currentView === 'neu' && (t.assignee_id || !['new', 'open'].includes(t.status))) return false;
-      // Admin 'alle' has no filter
+      // Hide assigned tickets from 'alle' and 'neu' if they are assigned to the current user (requested behavior)
+      if (currentView === 'alle' && t.assignee_id === currentUser?.id) return false;
 
       if (filterStatus && t.status !== filterStatus) return false;
       if (filterPriority && t.priority !== filterPriority) return false;

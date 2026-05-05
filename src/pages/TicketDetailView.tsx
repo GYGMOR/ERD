@@ -150,7 +150,7 @@ export const TicketDetailView = () => {
       const res = await dataService.addTicketMessage(id!, {
         ticket_id: id,
         sender_id: currentUser.id,
-        message: commentBody.trim(),
+        body: commentBody.trim(),
         is_internal: isInternal
       });
       if (res.success && res.data) {
@@ -321,13 +321,21 @@ export const TicketDetailView = () => {
                         </div>
                         <div style={{ 
                           padding: '12px 16px', borderRadius: 'var(--radius-lg)', 
-                          backgroundColor: m.sender_id === currentUser?.id ? 'var(--color-primary)' : 'var(--color-surface-hover)',
-                          color: m.sender_id === currentUser?.id ? 'white' : 'var(--color-text-main)',
+                          backgroundColor: m.is_internal ? 'rgba(255, 171, 0, 0.1)' : (m.sender_id === currentUser?.id ? 'var(--color-primary)' : 'var(--color-surface-hover)'),
+                          color: m.is_internal ? '#b27700' : (m.sender_id === currentUser?.id ? 'white' : 'var(--color-text-main)'),
                           fontSize: 14, lineHeight: 1.5,
                           borderBottomRightRadius: m.sender_id === currentUser?.id ? 2 : 'var(--radius-lg)',
-                          borderBottomLeftRadius: m.sender_id === currentUser?.id ? 'var(--radius-lg)' : 2
+                          borderBottomLeftRadius: m.sender_id === currentUser?.id ? 'var(--radius-lg)' : 2,
+                          border: m.is_internal ? '1px dashed rgba(255, 171, 0, 0.5)' : 'none'
                         }}>
                           {m.message}
+                          {m.attachment_url && (
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: m.sender_id === currentUser?.id && !m.is_internal ? '1px solid rgba(255,255,255,0.2)' : '1px solid rgba(0,0,0,0.1)' }}>
+                              <a href={m.attachment_url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: m.sender_id === currentUser?.id && !m.is_internal ? 'white' : 'var(--color-primary)', textDecoration: 'none', fontSize: 13, fontWeight: 600 }}>
+                                <Paperclip size={14} /> {m.attachment_name || 'Anhang herunterladen'}
+                              </a>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))
