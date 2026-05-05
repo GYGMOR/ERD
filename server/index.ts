@@ -28,7 +28,11 @@ app.use(cors());
 app.use(express.json());
 
 // Resend Email Setup
-const resend = new Resend(process.env.RESEND_API_KEY || '');
+const resendApiKey = process.env.RESEND_API_KEY;
+if (!resendApiKey) {
+  console.warn('WARNING: RESEND_API_KEY is not set. Emails will not be sent.');
+}
+const resend = new Resend(resendApiKey || 'missing_key');
 const EMAIL_NO_REPLY = 'HED-IT <no-reply@hed-it.ch>';
 const EMAIL_INFO = 'HED-IT <info@hed-it.ch>';
 const EMAIL_ADMIN_INTERNAL = 'joel.hediger@hed-it.ch';
@@ -631,7 +635,7 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
     if (userResult.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
     
     const user = userResult.rows[0];
-    const isValid = authenticator.verify({ token: code, secret: user.two_factor_secret });
+    const isValid = verify({ token: code, secret: user.two_factor_secret });
     
     if (!isValid) return res.status(401).json({ success: false, error: 'Ungültiger 2FA Code' });
 
