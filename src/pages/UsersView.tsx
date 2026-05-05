@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { UserPlus, UserX, UserCheck, Search, X, SortAsc, SortDesc } from 'lucide-react';
+import { UserPlus, UserX, UserCheck, Search, X, SortAsc, SortDesc, ShieldAlert } from 'lucide-react';
 import { getTenantId } from '../utils/auth';
 import { dataService } from '../services/dataService';
 
@@ -189,6 +189,23 @@ export const UsersView = () => {
     } catch { console.error('Failed to change role'); } finally { setSaving(null); }
   };
 
+  const reset2FA = async (user: User) => {
+    if (!window.confirm(`Möchten Sie 2FA für ${user.first_name} wirklich zurücksetzen? Der User muss es beim nächsten Login neu einrichten.`)) return;
+    setSaving(user.id);
+    try {
+      const res = await dataService.reset2FA(user.id);
+      if (res.success) {
+        alert('2FA wurde erfolgreich zurückgesetzt.');
+      } else {
+        alert(res.error || 'Fehler beim Zurücksetzen.');
+      }
+    } catch {
+      alert('Netzwerkfehler.');
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const initials = (u: User) => `${u.first_name.charAt(0)}${u.last_name.charAt(0)}`.toUpperCase();
   const COLORS = ['var(--color-primary)', 'var(--color-success)', '#8b5cf6', '#ec4899', 'var(--color-warning)', 'var(--color-info)'];
   const avatarColor = (id: string) => COLORS[id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
@@ -316,14 +333,25 @@ export const UsersView = () => {
                   {new Date(u.created_at).toLocaleDateString('de-CH')}
                 </td>
                 <td data-label="Aktion" style={{ padding: '13px 20px' }}>
-                  <button
-                    onClick={() => toggleActive(u)}
-                    disabled={saving === u.id}
-                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: `1px solid ${u.is_active ? 'var(--color-danger)' : 'var(--color-success)'}`, backgroundColor: 'transparent', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: u.is_active ? 'var(--color-danger)' : 'var(--color-success)' }}
-                  >
-                    {u.is_active ? <UserX size={12} /> : <UserCheck size={12} />}
-                    {u.is_active ? 'Sperren' : 'Freigeben'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <button
+                      onClick={() => toggleActive(u)}
+                      disabled={saving === u.id}
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: `1px solid ${u.is_active ? 'var(--color-danger)' : 'var(--color-success)'}`, backgroundColor: 'transparent', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: u.is_active ? 'var(--color-danger)' : 'var(--color-success)' }}
+                    >
+                      {u.is_active ? <UserX size={12} /> : <UserCheck size={12} />}
+                      {u.is_active ? 'Sperren' : 'Freigeben'}
+                    </button>
+                    <button
+                      onClick={() => reset2FA(u)}
+                      disabled={saving === u.id}
+                      title="2FA zurücksetzen"
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-warning)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--color-warning)' }}
+                    >
+                      <ShieldAlert size={12} />
+                      <span className="mobile-hide">2FA Reset</span>
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

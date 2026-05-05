@@ -644,6 +644,18 @@ app.post('/api/admin/users/:id/reject', authenticateToken, authorizeRole('admin'
   }
 });
 
+// Admin Route: Reset 2FA for a user
+app.post('/api/admin/users/:id/reset-2fa', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  try {
+    await pool.query('UPDATE users SET two_factor_enabled = false, two_factor_secret = NULL WHERE id = $1', [id]);
+    res.json({ success: true, message: '2FA wurde zurückgesetzt. Der User muss es beim nächsten Mal neu einrichten.' });
+  } catch (error) {
+    console.error('2FA reset error:', error);
+    res.status(500).json({ success: false, error: 'Fehler beim Zurücksetzen von 2FA' });
+  }
+});
+
 // 2FA: Verify during login
 app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express.Response) => {
   const { userId, code } = req.body;
