@@ -28,7 +28,7 @@ app.use(cors());
 app.use(express.json());
 
 // Resend Email Setup
-const resendApiKey = process.env.RESEND_API_KEY;
+const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim().replace(/^["']|["']$/g, '') : null;
 if (!resendApiKey) {
   console.warn('WARNING: RESEND_API_KEY is not set. Emails will not be sent.');
 }
