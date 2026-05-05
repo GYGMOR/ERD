@@ -541,13 +541,23 @@ app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin
   const { id } = req.params;
 
   try {
-    const userResult = await pool.query('UPDATE users SET is_active = true WHERE id = $1 RETURNING email, first_name', [id]);
+    const userResult = await pool.query('UPDATE users SET is_active = true WHERE id = $1 RETURNING tenant_id, email, first_name, last_name', [id]);
     
     if (userResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Benutzer nicht gefunden.' });
     }
 
-    const { email, first_name } = userResult.rows[0];
+    const { tenant_id, email, first_name, last_name } = userResult.rows[0];
+
+    // Create a company entry for the customer so they appear in "Kunden"
+    const companyResult = await pool.query(
+      'INSERT INTO companies (tenant_id, name) VALUES ($1, $2) RETURNING id',
+      [tenant_id, `${first_name} ${last_name}`]
+    );
+    const companyId = companyResult.rows[0].id;
+
+    // Link the contact to this new company
+    await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, id]);
 
     // Close the related registration ticket if exists
     await pool.query("UPDATE tickets SET status = 'closed' WHERE customer_id = $1 AND type = 'registration'", [id]);
@@ -613,12 +623,12 @@ app.post('/api/admin/users/:id/reject', authenticateToken, authorizeRole('admin'
       }
     }
 
+    // Delete all associated tickets first (to avoid foreign key errors)
+    await pool.query('DELETE FROM tickets WHERE customer_id = $1', [id]);
+
     // Delete user and all associated data (contacts, etc.)
     await pool.query('DELETE FROM contacts WHERE user_id = $1', [id]);
     await pool.query('DELETE FROM users WHERE id = $1 AND is_active = false', [id]);
-    
-    // Close the related registration ticket
-    await pool.query("UPDATE tickets SET status = 'closed', description = description || '\n\n[ABGELEHNT]' WHERE customer_id = $1 AND type = 'registration'", [id]);
 
     res.status(200).json({ success: true, message: 'Registrierung abgelehnt und Benutzer gelöscht.' });
   } catch (error) {
