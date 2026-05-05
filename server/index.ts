@@ -346,7 +346,7 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
 
     // Connect user and company via contacts table, correctly using its schema
     await pool.query(
-      'INSERT INTO contacts (tenant_id, company_id, user_id, phone, is_primary) VALUES ($1, $2, $3, $4, true)',
+      'INSERT INTO contacts (tenant_id, company_id, user_id, phone) VALUES ($1, $2, $3, $4)',
       [tenantId, companyId, userId, phone]
     );
 
