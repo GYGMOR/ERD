@@ -112,28 +112,41 @@ const pool = new Pool({
 // Database Migrations / Schema Checks
 async function runMigrations() {
   try {
-    // Add last_device to users
+    // Add last_device to users if not exists
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device TEXT');
-    // Ensure companies can have multiple contacts or linked correctly
     console.log('[INFO] Database schema verified.');
   } catch (err) {
     console.error('[CRITICAL] Migration failed:', err);
   }
 }
-runMigrations();
 
-// Test DB connection
-pool.query('SELECT NOW()', (err: Error | null) => {
-  if (err) {
-    console.error('Error connecting to the database', err.stack);
-  } else {
-    console.log('Connected to Database successfully.');
-    // Ensure extensions and password reset columns exist
-    pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(err => console.error('Error creating pgcrypto:', err));
-    pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT, ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP').catch(err => console.error('Error adding reset columns:', err));
-    
-    // Project logs table
-    pool.query(`
+// Test DB connection and run migrations
+const connectWithRetry = () => {
+  pool.query('SELECT NOW()', async (err) => {
+    if (err) {
+      console.error('Error connecting to the database, retrying in 5s...', err.message);
+      setTimeout(connectWithRetry, 5000);
+    } else {
+      console.log('Connected to Database successfully.');
+      await runMigrations();
+      await initDatabase();
+    }
+  });
+};
+
+async function initDatabase() {
+  try {
+    // 1. Extensions
+    await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(() => {});
+
+    // 2. Base columns
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token TEXT, ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_device TEXT').catch(() => {});
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT').catch(() => {});
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false').catch(() => {});
+
+    // 3. Tables
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS project_logs (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -142,20 +155,9 @@ pool.query('SELECT NOW()', (err: Error | null) => {
         type VARCHAR(50) DEFAULT 'note',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `).catch(err => console.error('Error creating project_logs table:', err));
+    `).catch(() => {});
 
-    // Ensure projects has assigned_to column
-    pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id)').catch(err => console.error('Error adding assigned_to to projects:', err));
-
-    // Signatures
-    pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to tickets:', err));
-    pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(err => console.error('Error adding signature_data to contracts:', err));
-
-    // Knowledge Base Folders
-    pool.query('ALTER TABLE kb_articles ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false, ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES kb_articles(id) ON DELETE CASCADE').catch(err => console.error('Error adding folder columns to kb_articles:', err));
-
-    // Files / Documents table
-    pool.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS files (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL,
@@ -170,23 +172,9 @@ pool.query('SELECT NOW()', (err: Error | null) => {
         uploaded_by UUID REFERENCES users(id),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
-    `).catch(err => console.error('Error creating files table:', err));
+    `).catch(() => {});
 
-    // Migrations for existing files table
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES files(id) ON DELETE CASCADE').catch(() => {});
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_type VARCHAR(50)').catch(() => {});
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_id UUID').catch(() => {});
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
-    pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
-    pool.query('ALTER TABLE files ALTER COLUMN file_path DROP NOT NULL').catch(() => {});
-
-    // Migrations for existing notifications table
-    pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
-    pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_role VARCHAR(50)').catch(() => {});
-
-    // Webhook API Keys table
-    pool.query(`
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS api_keys (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         tenant_id UUID NOT NULL,
@@ -195,18 +183,33 @@ pool.query('SELECT NOW()', (err: Error | null) => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_used_at TIMESTAMP
       )
-    `).catch(err => console.error('Error creating api_keys table:', err));
+    `).catch(() => {});
 
-    // 2FA columns
-    pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT').catch(() => {});
-    pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false').catch(() => {});
-    pool.query('ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT, ADD COLUMN IF NOT EXISTS attachment_name TEXT').catch(() => {});
+    // 4. Additional columns & migrations
+    await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id)').catch(() => {});
+    await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(() => {});
+    await pool.query('ALTER TABLE kb_articles ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false, ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES kb_articles(id) ON DELETE CASCADE').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES files(id) ON DELETE CASCADE').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_type VARCHAR(50)').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS entity_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE files ALTER COLUMN file_path DROP NOT NULL').catch(() => {});
+    await pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_role VARCHAR(50)').catch(() => {});
+    await pool.query('ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT, ADD COLUMN IF NOT EXISTS attachment_name TEXT').catch(() => {});
+    await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
+    await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(() => {});
 
-    // Products folder support
-    pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(err => console.error('Error adding is_folder to products:', err));
-    pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(err => console.error('Error adding parent_id to products:', err));
+    console.log('[INFO] Database initialization complete.');
+  } catch (err) {
+    console.error('[CRITICAL] initDatabase failed:', err);
   }
-});
+}
+
+connectWithRetry();
 
 // Routes
 app.get('/api/health', (req: express.Request, res: express.Response) => {
