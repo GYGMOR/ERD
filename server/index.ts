@@ -1230,13 +1230,19 @@ app.patch('/api/tickets/:id', authenticateToken, async (req: AuthenticatedReques
 
     setClauses.push(`updated_at = NOW()`);
     values.push(id);
-    values.push(tenant_id);
+    
+    let query;
+    if (req.user!.role === 'admin') {
+      query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} RETURNING *`;
+    } else {
+      values.push(tenant_id);
+      query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} AND (tenant_id = $${i+1} OR tenant_id IS NULL) RETURNING *`;
+    }
 
-    const query = `UPDATE tickets SET ${setClauses.join(', ')} WHERE id = $${i} AND tenant_id = $${i+1} RETURNING *`;
     console.log(`[DEBUG] Executing query: ${query} with values:`, values);
     
     const result = await pool.query(query, values);
-    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found or unauthorized' });
     
     // Notification for assignment change
     if (assignee_id && typeof assignee_id === 'string') {
