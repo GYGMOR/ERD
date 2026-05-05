@@ -20,6 +20,8 @@ const __dirname = path.dirname(__filename);
 // Load environment variables
 dotenv.config();
 
+console.log('[DEBUG] Available Env Var Names:', Object.keys(process.env).filter(k => !k.startsWith('npm_')));
+
 const app = express();
 const port = parseInt(process.env.PORT || '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
