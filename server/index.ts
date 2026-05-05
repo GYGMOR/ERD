@@ -664,7 +664,7 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
     if (userResult.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
     
     const user = userResult.rows[0];
-    const isValid = verify({ token: code, secret: user.two_factor_secret });
+    const isValid = await verify({ token: code, secret: user.two_factor_secret });
     
     if (!isValid) return res.status(401).json({ success: false, error: 'Ungültiger 2FA Code' });
 
@@ -713,7 +713,7 @@ app.post('/api/auth/2fa/enable', authenticateToken, async (req: AuthenticatedReq
     const userResult = await pool.query('SELECT two_factor_secret FROM users WHERE id = $1', [id]);
     const secret = userResult.rows[0].two_factor_secret;
     
-    const isValid = verify({ token: code, secret });
+    const isValid = await verify({ token: code, secret });
     if (!isValid) return res.status(400).json({ success: false, error: 'Ungültiger Code' });
     
     await pool.query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [id]);
@@ -853,6 +853,7 @@ app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Req
         } catch (err) { console.error('Failed to send ticket update mail:', err); }
       }
     }
+}
 
     // Fetch joined with user data
     const joined = await pool.query(
@@ -869,8 +870,8 @@ app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Req
         const ticketInfo = await pool.query('SELECT customer_id, title, tenant_id FROM tickets WHERE id = $1', [id]);
         if (ticketInfo.rows.length > 0) {
             const ticket = ticketInfo.rows[0];
-            // Only notify if the sender is NOT the customer themselves (though this route is internal, just being safe)
-            if (ticket.customer_id !== user_id) {
+            // Only notify if the sender is NOT the customer themselves
+            if (ticket.customer_id !== userId) {
                 await createNotification({
                     tenant_id: ticket.tenant_id,
                     user_id: ticket.customer_id,
