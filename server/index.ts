@@ -425,7 +425,7 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
     res.status(201).json({ success: true, message: 'Registrierung erfolgreich. Wir prüfen Ihr Konto innerhalb von 24-48 Stunden.' });
   } catch (error) {
     console.error('Registration error:', error);
-    res.status(500).json({ success: false, error: 'Serverfehler bei der Registrierung' });
+    res.status(500).json({ success: false, error: 'Serverfehler bei der Registrierung: ' + (error as any).message });
   }
 });
 
