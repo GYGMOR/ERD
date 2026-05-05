@@ -2821,7 +2821,8 @@ app.get('/api/portal/offers', authenticateToken, async (req: AuthenticatedReques
     if (!companyId) return res.json({ success: true, data: [] });
 
     const result = await pool.query('SELECT * FROM offers WHERE company_id = $1 ORDER BY created_at DESC', [companyId]);
-    res.json({ success: true, data: result.rows });
+    const cleaned = result.rows.map(r => ({ ...r, status: r.status || 'sent' }));
+    res.json({ success: true, data: cleaned });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Server error' });
   }

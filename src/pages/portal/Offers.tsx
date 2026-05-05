@@ -49,7 +49,8 @@ export const Offers = () => {
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status.toLowerCase()) {
+    const s = (status || 'sent').toLowerCase();
+    switch (s) {
       case 'sent': return <span className="badge info pulse">Offen</span>;
       case 'accepted': return <span className="badge success">Akzeptiert</span>;
       case 'rejected': return <span className="badge danger">Abgelehnt</span>;
