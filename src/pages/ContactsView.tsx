@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { UserPlus, Mail, Phone, Building2, ShieldAlert, Check, Loader2 } from 'lucide-react';
+import { UserPlus, Mail, Phone, Building2, ShieldAlert, Check, Loader2, UserX } from 'lucide-react';
 import { NewContactModal } from '../components/NewContactModal';
 import { dataService } from '../services/dataService';
 import type { Contact } from '../types/entities';
@@ -68,6 +68,53 @@ const Reset2FAButton = ({ userId }: { userId: string }) => {
     >
       {loading ? <Loader2 size={12} className="animate-spin" /> : (success ? <Check size={12} /> : <ShieldAlert size={12} />)}
       {success ? 'Zurückgesetzt' : '2FA Reset'}
+    </button>
+  );
+};
+
+const DeleteUserButton = ({ userId, onDeleted }: { userId: string, onDeleted: () => void }) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('WARNUNG: Möchten Sie diesen Kontakt wirklich löschen? Dies löscht auch alle Tickets und die dazugehörige Firma endgültig.')) return;
+    
+    setLoading(true);
+    try {
+      const res = await dataService.deleteUser(userId);
+      if (res.success) {
+        onDeleted();
+      } else {
+        alert('Fehler: ' + res.error);
+      }
+    } catch (err) {
+      alert('Netzwerkfehler beim Löschen');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <button 
+      onClick={handleDelete}
+      disabled={loading}
+      style={{ 
+        padding: '6px 12px', 
+        borderRadius: 'var(--radius-sm)', 
+        fontSize: 11, 
+        fontWeight: 600,
+        backgroundColor: 'var(--color-surface-hover)',
+        color: 'var(--color-danger)',
+        border: '1px solid var(--color-danger)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+      className="hover-bg-row"
+      title="Kontakt komplett löschen"
+    >
+      {loading ? <Loader2 size={12} className="animate-spin" /> : <UserX size={12} />}
+      Löschen
     </button>
   );
 };
@@ -232,7 +279,10 @@ export const ContactsView = () => {
                   </td>
                   <td style={{ padding: '14px 24px', textAlign: 'right' }}>
                     {c.user_id && (
-                      <Reset2FAButton userId={c.user_id} />
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <Reset2FAButton userId={c.user_id} />
+                        <DeleteUserButton userId={c.user_id} onDeleted={fetchContacts} />
+                      </div>
                     )}
                   </td>
                 </tr>

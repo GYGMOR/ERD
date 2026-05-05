@@ -346,8 +346,8 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
 
     // Connect user and company via contacts table, correctly using its schema
     await pool.query(
-      'INSERT INTO contacts (company_id, user_id, phone, is_primary) VALUES ($1, $2, $3, true)',
-      [companyId, userId, phone]
+      'INSERT INTO contacts (tenant_id, company_id, user_id, phone, is_primary) VALUES ($1, $2, $3, $4, true)',
+      [tenantId, companyId, userId, phone]
     );
 
     // CREATE SYSTEM TICKET FOR APPROVAL
@@ -355,7 +355,7 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
       `INSERT INTO tickets (tenant_id, customer_id, company_id, title, description, priority, status, category)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
       [
-        tenantId, 
+        tenantId,
         userId, 
         companyId,
         `Neuregistrierung: ${firstName} ${lastName}`, 
