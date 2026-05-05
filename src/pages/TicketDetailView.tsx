@@ -270,7 +270,40 @@ export const TicketDetailView = () => {
           </div>
           
           <div style={{ display: 'flex', gap: 10 }}>
-            {ticket.type === 'registration' && status === 'open' && (
+            {ticket.category === 'upgrade_request' && status === 'new' && (
+              <>
+                <button className="btn-danger" onClick={() => handleSave()} disabled={saving} style={{ padding: '10px 20px', borderRadius: 8 }}>
+                  <X size={18} /> Ablehnen
+                </button>
+                <button 
+                  className="btn-success" 
+                  onClick={async () => {
+                    setSaving(true);
+                    try {
+                      const res = await fetch(`/api/tickets/${id}/approve-upgrade`, {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                      });
+                      if (res.ok) {
+                        setSaveSuccess(true);
+                        setTimeout(() => navigate('/tickets'), 1500);
+                      } else {
+                        setError('Fehler beim Bestätigen des Upgrades.');
+                      }
+                    } catch (e) {
+                      setError('Netzwerkfehler.');
+                    } finally {
+                      setSaving(false);
+                    }
+                  }} 
+                  disabled={saving} 
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8, backgroundColor: '#36b37e', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  <CheckCircle size={18} /> Upgrade bestätigen & Vertrag anlegen
+                </button>
+              </>
+            )}
+            {ticket.category === 'registration' && status === 'open' && (
               <>
                 <button className="btn-danger" onClick={handleRejectUser} disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', borderRadius: 8 }}>
                   <UserX size={18} /> Registrierung ablehnen
@@ -280,7 +313,7 @@ export const TicketDetailView = () => {
                 </button>
               </>
             )}
-            {status === 'open' && ticket.type !== 'registration' && (
+            {status === 'open' && ticket.category !== 'registration' && ticket.category !== 'upgrade_request' && (
               <button className="btn-secondary" onClick={handleTakeOver} disabled={saving}>Ticket übernehmen</button>
             )}
             <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Speichert...' : 'Änderungen speichern'}</button>

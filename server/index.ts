@@ -296,7 +296,7 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
 
 // Auth Route: Register
 app.post('/api/auth/register', async (req: express.Request, res: express.Response) => {
-  const { email, password, firstName, lastName, botVerificationChecked } = req.body;
+  const { email, password, firstName, lastName, botVerificationChecked, companyName, domain, address } = req.body;
 
   if (botVerificationChecked !== true) {
     return res.status(400).json({ success: false, error: 'Bitte bestätige, dass du kein Roboter bist.' });
@@ -331,21 +331,31 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
 
     const userId = newUser.rows[0].id;
 
+    let companyId = null;
+    if (companyName) {
+      const companyResult = await pool.query(
+        'INSERT INTO companies (tenant_id, name, website, address) VALUES ($1, $2, $3, $4) RETURNING id',
+        [tenantId, companyName, domain || null, address || null]
+      );
+      companyId = companyResult.rows[0].id;
+    }
+
     // Automatically create a contact entry for the user
     const contactResult = await pool.query(
-      'INSERT INTO contacts (tenant_id, user_id, first_name, last_name, email) VALUES ($1, $2, $3, $4, $5) RETURNING id',
-      [tenantId, userId, firstName, lastName, email]
+      'INSERT INTO contacts (tenant_id, user_id, company_id, first_name, last_name, email) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [tenantId, userId, companyId, firstName, lastName, email]
     );
 
     // CREATE SYSTEM TICKET FOR APPROVAL
     const ticketResult = await pool.query(
-      `INSERT INTO tickets (tenant_id, customer_id, title, description, priority, status, type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      `INSERT INTO tickets (tenant_id, customer_id, company_id, title, description, priority, status, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
       [
         tenantId, 
         userId, 
+        companyId,
         `Neuregistrierung: ${firstName} ${lastName}`, 
-        `Ein neuer Benutzer hat sich registriert und wartet auf Freischaltung.\nE-Mail: ${email}\nName: ${firstName} ${lastName}`,
+        `Ein neuer Benutzer hat sich registriert und wartet auf Freischaltung.\nE-Mail: ${email}\nName: ${firstName} ${lastName}\nFirma: ${companyName || '-'}\nWebseite: ${domain || '-'}`,
         'high',
         'open',
         'registration'
@@ -1230,7 +1240,7 @@ app.patch('/api/tickets/:id', authenticateToken, async (req: AuthenticatedReques
       if (allowedFields.includes(key)) {
         setClauses.push(`${key} = $${i}`);
         // Convert empty string to null for UUID fields
-        if (key === 'assignee_id' && value === '') {
+        if (['assignee_id', 'company_id', 'customer_id'].includes(key) && value === '') {
           values.push(null);
         } else {
           values.push(value);
@@ -2878,8 +2888,8 @@ app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: Authent
     
     // Create a ticket for the upgrade request
     const ticketResult = await pool.query(
-      `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, type)
-       VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'support') RETURNING id`,
+      `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, category)
+       VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'upgrade_request') RETURNING id`,
       [
         tenant_id, 
         companyId, 
@@ -3145,6 +3155,59 @@ app.patch('/api/tickets/:id/assign', authenticateToken, authorizeRole('admin', '
 
         res.json({ success: true, data: result.rows[0] });
     } catch (error) {
+        res.status(500).json({ success: false, error: 'Server error' });
+    }
+});
+
+app.post('/api/tickets/:id/approve-upgrade', authenticateToken, authorizeRole('admin', 'management'), async (req: AuthenticatedRequest, res: express.Response) => {
+    const { id } = req.params;
+    try {
+        const ticketRes = await pool.query('SELECT * FROM tickets WHERE id = $1', [id]);
+        if (ticketRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
+        const ticket = ticketRes.rows[0];
+
+        // Parse price and service name from description
+        const desc = ticket.description || '';
+        const lines = desc.split('\n');
+        let monthly_price = 0;
+        let service_name = 'Upgrade';
+        
+        for (const line of lines) {
+            if (line.includes('Kosten:')) {
+                const match = line.match(/(\d+(\.\d+)?)/);
+                if (match) monthly_price = parseFloat(match[1]);
+            }
+            if (line.includes('Service "')) {
+                const match = line.match(/Service "(.*?)"/);
+                if (match) service_name = match[1];
+            }
+        }
+
+        // Create new contract
+        await pool.query(
+            `INSERT INTO contracts (tenant_id, company_id, service_name, type, status, start_date, monthly_price, payment_cycle)
+             VALUES ($1, $2, $3, $4, 'active', NOW(), $5, 'monthly')`,
+            [ticket.tenant_id, ticket.company_id, service_name, 'service', monthly_price]
+        );
+
+        // Update ticket
+        await pool.query('UPDATE tickets SET status = \'closed\', updated_at = NOW() WHERE id = $1', [id]);
+
+        // Notify customer
+        await createNotification({
+            tenant_id: ticket.tenant_id,
+            user_id: ticket.customer_id,
+            type: 'contract',
+            entity_id: ticket.company_id,
+            title: 'Upgrade aktiviert',
+            message: `Ihr gewünschtes Upgrade "${service_name}" wurde erfolgreich aktiviert!`,
+            priority: 'high',
+            link: `/portal/contracts`
+        });
+
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error approving upgrade:', error);
         res.status(500).json({ success: false, error: 'Server error' });
     }
 });

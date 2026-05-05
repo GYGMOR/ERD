@@ -95,9 +95,8 @@ export const TicketsView = () => {
       // Inbox Logic
       if (currentView === 'meine' && t.assignee_id !== currentUser?.id) return false;
       if (currentView === 'neu' && (t.assignee_id || !['new', 'open'].includes(t.status))) return false;
-      // Hide assigned tickets from 'alle' and 'neu' if they are assigned to the current user (requested behavior)
-      if (currentView === 'alle' && t.assignee_id === currentUser?.id) return false;
 
+      // Filter Logic
       if (filterStatus && t.status !== filterStatus) return false;
       if (filterPriority && t.priority !== filterPriority) return false;
       if (filterType && t.type !== filterType) return false;
@@ -109,7 +108,7 @@ export const TicketsView = () => {
       )) return false;
       return true;
     });
-  }, [tickets, search, filterStatus, filterPriority, filterType]);
+  }, [tickets, search, filterStatus, filterPriority, filterType, currentView, currentUser]);
 
   const hasFilters = search || filterStatus || filterPriority || filterType;
   const clearFilters = () => { setSearch(''); setFilterStatus(''); setFilterPriority(''); setFilterType(''); };
