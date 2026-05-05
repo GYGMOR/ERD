@@ -145,6 +145,11 @@ async function initDatabase() {
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT').catch(() => {});
     await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false').catch(() => {});
 
+    // 2b. Company columns
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS address TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS website TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS industry TEXT').catch(() => {});
+
     // 3. Tables
     await pool.query(`
       CREATE TABLE IF NOT EXISTS project_logs (
