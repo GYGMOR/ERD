@@ -2177,19 +2177,7 @@ app.post('/api/auth/reset-password', async (req: express.Request, res: express.R
 });
 
 
-// Database migrations moved to startup logic
-const runMigrations = async () => {
-  try {
-    await pool.query(`
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(10),
-      ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP;
-    `);
-    console.log('Database schema updated (if necessary)');
-  } catch (err) {
-    console.error('Error updating schema:', err);
-  }
-};
-runMigrations();
+// Database migrations are now handled in the startup logic at the top of this file.
 
 
 
