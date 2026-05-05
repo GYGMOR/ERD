@@ -296,10 +296,14 @@ app.post('/api/auth/login', async (req: express.Request, res: express.Response) 
 
 // Auth Route: Register
 app.post('/api/auth/register', async (req: express.Request, res: express.Response) => {
-  const { email, password, firstName, lastName, botVerificationChecked, companyName, domain, address } = req.body;
+  const { email, password, firstName, lastName, phone, botVerificationChecked, companyName, domain, address } = req.body;
 
   if (botVerificationChecked !== true) {
     return res.status(400).json({ success: false, error: 'Bitte bestätige, dass du kein Roboter bist.' });
+  }
+  
+  if (!phone) {
+    return res.status(400).json({ success: false, error: 'Telefonnummer ist zwingend erforderlich.' });
   }
 
   try {
@@ -340,10 +344,10 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
       companyId = companyResult.rows[0].id;
     }
 
-    // Automatically create a contact entry for the user
-    const contactResult = await pool.query(
-      'INSERT INTO contacts (tenant_id, user_id, company_id, first_name, last_name, email) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [tenantId, userId, companyId, firstName, lastName, email]
+    // Connect user and company via contacts table, correctly using its schema
+    await pool.query(
+      'INSERT INTO contacts (company_id, user_id, phone, is_primary) VALUES ($1, $2, $3, true)',
+      [companyId, userId, phone]
     );
 
     // CREATE SYSTEM TICKET FOR APPROVAL
@@ -576,6 +580,46 @@ app.patch('/api/users/:id', authenticateToken, authorizeRole('admin', 'manager')
   } catch (error) {
     console.error('Error updating user:', error);
     res.status(500).json({ success: false, error: 'Server error updating user' });
+  }
+});
+
+// Admin Route: Delete User & associated company
+app.delete('/api/users/:id', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { tenant_id } = req.user!;
+
+  try {
+    // Start transaction
+    await pool.query('BEGIN');
+
+    // 1. Find the company associated with this user
+    const contactRes = await pool.query('SELECT company_id FROM contacts WHERE user_id = $1', [id]);
+    
+    // 2. Delete the user (this cascades to contacts in a proper schema, but we do it manually to be safe)
+    await pool.query('DELETE FROM contacts WHERE user_id = $1', [id]);
+    
+    // 3. Delete the tickets associated with the user
+    await pool.query('DELETE FROM tickets WHERE customer_id = $1', [id]);
+    
+    // 4. Delete the company if one was found
+    if (contactRes.rows.length > 0 && contactRes.rows[0].company_id) {
+      await pool.query('DELETE FROM companies WHERE id = $1 AND tenant_id = $2', [contactRes.rows[0].company_id, tenant_id]);
+    }
+
+    // 5. Finally, delete the user
+    const userRes = await pool.query('DELETE FROM users WHERE id = $1 AND tenant_id = $2 RETURNING id', [id, tenant_id]);
+    
+    if (userRes.rows.length === 0) {
+      await pool.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Benutzer nicht gefunden' });
+    }
+
+    await pool.query('COMMIT');
+    res.json({ success: true, message: 'Benutzer und Firma erfolgreich gelöscht' });
+  } catch (error) {
+    await pool.query('ROLLBACK');
+    console.error('Error deleting user:', error);
+    res.status(500).json({ success: false, error: 'Server error deleting user' });
   }
 });
 
@@ -3166,29 +3210,43 @@ app.post('/api/tickets/:id/approve-upgrade', authenticateToken, authorizeRole('a
         if (ticketRes.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found' });
         const ticket = ticketRes.rows[0];
 
-        // Parse price and service name from description
+        // Parse price, service name, and type from description
         const desc = ticket.description || '';
         const lines = desc.split('\n');
-        let monthly_price = 0;
+        let price = 0;
         let service_name = 'Upgrade';
+        let isMonthly = true;
         
         for (const line of lines) {
             if (line.includes('Kosten:')) {
                 const match = line.match(/(\d+(\.\d+)?)/);
-                if (match) monthly_price = parseFloat(match[1]);
+                if (match) price = parseFloat(match[1]);
             }
             if (line.includes('Service "')) {
                 const match = line.match(/Service "(.*?)"/);
                 if (match) service_name = match[1];
             }
+            if (line.includes('Typ: Einmalig')) {
+                isMonthly = false;
+            }
         }
 
-        // Create new contract
-        await pool.query(
-            `INSERT INTO contracts (tenant_id, company_id, service_name, type, status, start_date, monthly_price, payment_cycle)
-             VALUES ($1, $2, $3, $4, 'active', NOW(), $5, 'monthly')`,
-            [ticket.tenant_id, ticket.company_id, service_name, 'service', monthly_price]
-        );
+        if (isMonthly) {
+            // Create new contract for recurring monthly costs
+            await pool.query(
+                `INSERT INTO contracts (tenant_id, company_id, service_name, type, status, start_date, monthly_price, payment_cycle)
+                 VALUES ($1, $2, $3, $4, 'active', NOW(), $5, 'monthly')`,
+                [ticket.tenant_id, ticket.company_id, service_name, 'service', price]
+            );
+        } else {
+            // For one-time costs, generate an immediate invoice
+            const invNumber = 'INV-' + Math.floor(Math.random() * 1000000);
+            await pool.query(
+                `INSERT INTO invoices (company_id, invoice_number, status, amount, issue_date, due_date)
+                 VALUES ($1, $2, 'draft', $3, NOW(), NOW() + interval '30 days')`,
+                [ticket.company_id, invNumber, price]
+            );
+        }
 
         // Update ticket
         await pool.query('UPDATE tickets SET status = \'closed\', updated_at = NOW() WHERE id = $1', [id]);

@@ -59,6 +59,18 @@ export const dataService = {
     }
   },
 
+  async deleteUser(id: string) {
+    try {
+      const data = await fetch(`${API_BASE}/users/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      }).then(handleResponse);
+      return data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
   async approveUser(id: string) {
     try {
       const data = await fetch(`${API_BASE}/admin/users/${id}/approve`, {

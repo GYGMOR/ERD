@@ -207,6 +207,24 @@ export const UsersView = () => {
     }
   };
 
+  const handleDeleteUser = async (user: User) => {
+    if (!window.confirm(`WARNUNG: Möchten Sie ${user.first_name} ${user.last_name} wirklich löschen? Dies löscht auch alle Tickets und die dazugehörige Firma endgültig.`)) return;
+    setSaving(user.id);
+    try {
+      const res = await dataService.deleteUser(user.id);
+      if (res.success) {
+        setUsers(prev => prev.filter(u => u.id !== user.id));
+        alert('Benutzer und Firma wurden gelöscht.');
+      } else {
+        alert(res.error || 'Fehler beim Löschen.');
+      }
+    } catch {
+      alert('Netzwerkfehler.');
+    } finally {
+      setSaving(null);
+    }
+  };
+
   const initials = (u: User) => `${u.first_name.charAt(0)}${u.last_name.charAt(0)}`.toUpperCase();
   const COLORS = ['var(--color-primary)', 'var(--color-success)', '#8b5cf6', '#ec4899', 'var(--color-warning)', 'var(--color-info)'];
   const avatarColor = (id: string) => COLORS[id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % COLORS.length];
@@ -362,6 +380,17 @@ export const UsersView = () => {
                       <ShieldAlert size={12} />
                       <span className="mobile-hide">2FA Reset</span>
                     </button>
+                    {u.role === 'customer' && (
+                      <button
+                        onClick={() => handleDeleteUser(u)}
+                        disabled={saving === u.id}
+                        title="Kunde komplett löschen"
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-danger)', backgroundColor: 'transparent', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--color-danger)' }}
+                      >
+                        <UserX size={12} />
+                        <span className="mobile-hide">Löschen</span>
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
