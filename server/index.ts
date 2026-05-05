@@ -191,6 +191,7 @@ pool.query('SELECT NOW()', (err: Error | null) => {
     // 2FA columns
     pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_secret TEXT').catch(() => {});
     pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT false').catch(() => {});
+    pool.query('ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT, ADD COLUMN IF NOT EXISTS attachment_name TEXT').catch(() => {});
 
     // Products folder support
     pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(err => console.error('Error adding is_folder to products:', err));
@@ -540,6 +541,7 @@ app.post('/api/auth/2fa/setup', authenticateToken, async (req: AuthenticatedRequ
     await pool.query('UPDATE users SET two_factor_secret = $1 WHERE id = $2', [secret, id]);
     res.json({ success: true, qrCodeUrl, secret });
   } catch (error) {
+    console.error('2FA Setup Error:', error);
     res.status(500).json({ success: false, error: '2FA Setup failed' });
   }
 });
@@ -634,21 +636,54 @@ app.get('/api/tickets/:id/comments', async (req: express.Request, res: express.R
   }
 });
 
-app.post('/api/tickets/:id/comments', async (req: express.Request, res: express.Response) => {
+app.post('/api/tickets/:id/comments', authenticateToken, async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
-  const { user_id, body, is_internal } = req.body;
-  if (!user_id || !body) {
-    return res.status(400).json({ success: false, error: 'user_id and body are required' });
+  const { body, is_internal } = req.body;
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.user!.id;
+  const tenant_id = authReq.user!.tenant_id;
+
+  if (!body) {
+    return res.status(400).json({ success: false, error: 'Message body is required' });
   }
   try {
     const result = await pool.query(
       `INSERT INTO ticket_messages (ticket_id, sender_id, message, is_internal)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [id, user_id, body, is_internal || false]
+      [id, userId, body, is_internal || false]
     );
     // Also update ticket updated_at
     await pool.query(`UPDATE tickets SET updated_at = NOW() WHERE id = $1`, [id]);
+
+    // Notify customer if message is from staff and NOT internal
+    if (!is_internal && authReq.user!.role !== 'customer') {
+      const ticketInfo = await pool.query(`
+        SELECT t.title, u.email, u.first_name 
+        FROM tickets t JOIN users u ON t.customer_id = u.id 
+        WHERE t.id = $1`, [id]);
+      
+      if (ticketInfo.rows.length > 0) {
+        const { email, first_name, title } = ticketInfo.rows[0];
+        try {
+          await transporter.sendMail({
+            from: `"HED-IT Support" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: `Update zu Ihrem Ticket: ${title}`,
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h3>Hallo ${first_name},</h3>
+                <p>Es gibt eine neue Nachricht zu Ihrem Ticket <b>"${title}"</b>.</p>
+                <div style="background: #f3f4f6; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                  ${body}
+                </div>
+                <a href="https://hed-it.ch/portal/tickets" style="display: inline-block; padding: 12px 24px; background: #00f2ff; color: #000; text-decoration: none; border-radius: 8px; font-weight: bold;">Im Portal antworten</a>
+              </div>
+            `
+          });
+        } catch (err) { console.error('Failed to send ticket update mail:', err); }
+      }
+    }
 
     // Fetch joined with user data
     const joined = await pool.query(
@@ -2237,7 +2272,7 @@ app.get('/api/portal/tickets/:id', authenticateToken, async (req: AuthenticatedR
 app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
   const { message } = req.body;
-  const { id: userId, tenant_id } = req.user!;
+  const { id: userId, tenant_id, firstName, lastName } = req.user!;
 
   try {
     // Check if ticket belongs to user
@@ -2249,7 +2284,7 @@ app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: Auth
       [id, userId, message]
     );
 
-    // Notify assignee if exists
+    // Notify assignee via internal notification & Email
     if (check.rows[0].assignee_id) {
         await createNotification({
             tenant_id,
@@ -2261,10 +2296,46 @@ app.post('/api/portal/tickets/:id/messages', authenticateToken, async (req: Auth
             priority: 'normal',
             link: `/tickets/${id as string}`
         });
+
+        // Send Email to Assignee
+        const assignee = await pool.query('SELECT email FROM users WHERE id = $1', [check.rows[0].assignee_id]);
+        if (assignee.rows.length > 0) {
+          try {
+            await transporter.sendMail({
+              from: `"HED-IT Portal" <${process.env.SMTP_USER}>`,
+              to: assignee.rows[0].email,
+              subject: `Kunden-Antwort: ${check.rows[0].title}`,
+              html: `<p>Der Kunde <b>${firstName} ${lastName}</b> hat auf das Ticket "${check.rows[0].title}" geantwortet:</p><p><i>${message}</i></p><a href="https://tool.hed-it.ch/tickets/${id}">Im Admin-Tool ansehen</a>`
+            });
+          } catch (err) { console.error('Failed to send mail to staff:', err); }
+        }
     }
 
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/portal/tickets/:id/attachments', authenticateToken, upload.single('file'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { id: userId, tenant_id, firstName, lastName } = req.user!;
+  const file = req.file;
+
+  if (!file) return res.status(400).json({ success: false, error: 'No file uploaded' });
+
+  try {
+    const attachmentUrl = `/uploads/${file.filename}`;
+    const attachmentName = file.originalname;
+
+    const result = await pool.query(
+      'INSERT INTO ticket_messages (ticket_id, sender_id, message, is_internal, attachment_url, attachment_name) VALUES ($1, $2, $3, FALSE, $4, $5) RETURNING *',
+      [id, userId, `Anhang: ${attachmentName}`, attachmentUrl, attachmentName]
+    );
+
+    res.status(201).json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    console.error('Attachment upload error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -2310,7 +2381,7 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
 
 app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { serviceId, serviceName, price, type } = req.body;
-  const { id: userId, tenant_id } = req.user!;
+  const { id: userId, tenant_id, firstName, lastName } = req.user!;
 
   try {
     const companyId = await getCompanyId(userId);
@@ -2328,7 +2399,7 @@ app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: Authent
       ]
     );
 
-    // Notify admins
+    // Notify admins via Notification & Email
     await createNotification({
       tenant_id,
       target_role: 'admin',
@@ -2340,10 +2411,76 @@ app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: Authent
       link: `/tickets/${ticketResult.rows[0].id}`
     });
 
+    // Send Email to Admin
+    try {
+      await transporter.sendMail({
+        from: `"HED-IT Portal" <${process.env.SMTP_USER}>`,
+        to: process.env.SMTP_USER, // Internal mail
+        subject: `NEUE BUCHUNG: ${serviceName} von ${firstName} ${lastName}`,
+        html: `<h3>Neue Buchung im Portal</h3><p>Kunde: ${firstName} ${lastName}</p><p>Service: ${serviceName}</p><p>Preis: ${price} (${type})</p><a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}">Ticket öffnen</a>`
+      });
+    } catch (err) { console.error('Failed to send upgrade mail:', err); }
+
     res.json({ success: true, message: 'Anfrage erfolgreich erstellt.' });
   } catch (error) {
     console.error('Upgrade error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// --- Portal Profile Endpoints ---
+app.get('/api/portal/profile', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const contactResult = await pool.query('SELECT * FROM contacts WHERE user_id = $1', [userId]);
+    if (contactResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Contact not found' });
+    
+    const contact = contactResult.rows[0];
+    let company = null;
+    if (contact.company_id) {
+      const companyResult = await pool.query('SELECT * FROM companies WHERE id = $1', [contact.company_id]);
+      if (companyResult.rows.length > 0) company = companyResult.rows[0];
+    }
+    
+    res.json({ success: true, data: { contact, company } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error fetching profile' });
+  }
+});
+
+app.patch('/api/portal/profile', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { firstName, lastName, phone, companyName, website, industry, address } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+
+  try {
+    // 1. Update User & Contact
+    await pool.query('UPDATE users SET first_name = $1, last_name = $2 WHERE id = $3', [firstName, lastName, userId]);
+    const contactUpdate = await pool.query(
+      'UPDATE contacts SET first_name = $1, last_name = $2, phone = $3 WHERE user_id = $4 RETURNING company_id',
+      [firstName, lastName, phone, userId]
+    );
+
+    let companyId = contactUpdate.rows[0].company_id;
+
+    // 2. Update or Create Company
+    if (companyId) {
+      await pool.query(
+        'UPDATE companies SET name = $1, website = $2, industry = $3, address = $4 WHERE id = $5',
+        [companyName, website, industry, address, companyId]
+      );
+    } else {
+      const newCompany = await pool.query(
+        'INSERT INTO companies (tenant_id, name, website, industry, address) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+        [tenant_id, companyName, website, industry, address]
+      );
+      companyId = newCompany.rows[0].id;
+      await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, userId]);
+    }
+
+    res.json({ success: true, message: 'Profil erfolgreich aktualisiert.' });
+  } catch (error) {
+    console.error('Profile update error:', error);
+    res.status(500).json({ success: false, error: 'Server error updating profile' });
   }
 });
 
