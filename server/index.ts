@@ -531,7 +531,8 @@ app.post('/api/auth/2fa/login-verify', async (req: express.Request, res: express
 app.post('/api/auth/2fa/setup', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id, email } = req.user!;
   const secret = authenticator.generateSecret();
-  const otpauth = authenticator.keyuri(email, 'hed-it.ch', secret);
+  // Set service name and user email for better app identification
+  const otpauth = authenticator.keyuri(email, 'HED-IT', secret);
   
   try {
     const qrCodeUrl = await QRCode.toDataURL(otpauth);
@@ -1028,9 +1029,13 @@ app.get('/api/tickets', async (req: express.Request, res: express.Response) => {
   }
 });
 
-app.post('/api/tickets', async (req: express.Request, res: express.Response) => {
-  const { tenant_id, title, description, status, priority, type, company_id, customer_id, assignee_id } = req.body;
+app.post('/api/tickets', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, description, status, priority, type, company_id, customer_id, assignee_id } = req.body;
+  const { tenant_id: userTenantId, id: userId } = req.user!;
   
+  // Use tenant_id from token if not provided in body (safer)
+  const tenant_id = req.body.tenant_id || userTenantId;
+
   if (!tenant_id || !title) {
     return res.status(400).json({ success: false, error: 'Tenant ID and Title are required' });
   }
@@ -2299,6 +2304,45 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
     const result = await pool.query('SELECT * FROM contracts WHERE company_id = $1 ORDER BY start_date DESC', [companyId]);
     res.json({ success: true, data: result.rows });
   } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { serviceId, serviceName, price, type } = req.body;
+  const { id: userId, tenant_id } = req.user!;
+
+  try {
+    const companyId = await getCompanyId(userId);
+    
+    // Create a ticket for the upgrade request
+    const ticketResult = await pool.query(
+      `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, type)
+       VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'support') RETURNING id`,
+      [
+        tenant_id, 
+        companyId, 
+        userId, 
+        `Upgrade-Anfrage: ${serviceName}`, 
+        `Der Kunde möchte den Service "${serviceName}" buchen.\nKosten: ${price}\nTyp: ${type === 'monthly' ? 'Monatlich' : 'Einmalig'}`
+      ]
+    );
+
+    // Notify admins
+    await createNotification({
+      tenant_id,
+      target_role: 'admin',
+      type: 'ticket',
+      entity_id: ticketResult.rows[0].id,
+      title: 'Neue Upgrade-Buchung',
+      message: `Ein Kunde hat "${serviceName}" gebucht.`,
+      priority: 'high',
+      link: `/tickets/${ticketResult.rows[0].id}`
+    });
+
+    res.json({ success: true, message: 'Anfrage erfolgreich erstellt.' });
+  } catch (error) {
+    console.error('Upgrade error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
 });
