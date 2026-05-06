@@ -86,6 +86,7 @@ export interface Contact {
   tenant_id: string;
   company_id: string | null;
   company_name: string | null;
+  user_id: string | null;
   first_name: string;
   last_name: string;
   email: string | null;

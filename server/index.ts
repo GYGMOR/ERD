@@ -212,6 +212,28 @@ async function initDatabase() {
     await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
     await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(() => {});
 
+    // 5. Contacts table migrations - ensure all columns exist
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS tenant_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS first_name VARCHAR(100) NOT NULL DEFAULT \'\'').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS last_name VARCHAR(100) NOT NULL DEFAULT \'\'').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS email VARCHAR(255)').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS role VARCHAR(100)').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS user_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE contacts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
+
+    // 6. Backfill: Sync contact first_name/last_name/email from linked users if empty
+    await pool.query(`
+      UPDATE contacts c 
+      SET first_name = u.first_name, 
+          last_name = u.last_name, 
+          email = COALESCE(c.email, u.email)
+      FROM users u 
+      WHERE c.user_id = u.id 
+        AND (c.first_name = '' OR c.first_name IS NULL OR c.last_name = '' OR c.last_name IS NULL)
+    `).catch((err: any) => console.log('[INFO] Contact backfill skipped:', err.message));
+
     console.log('[INFO] Database initialization complete.');
   } catch (err) {
     console.error('[CRITICAL] initDatabase failed:', err);
@@ -346,8 +368,8 @@ app.post('/api/auth/register', async (req: express.Request, res: express.Respons
 
     // Connect user and company via contacts table, correctly using its schema
     await pool.query(
-      'INSERT INTO contacts (tenant_id, company_id, user_id, phone, first_name, last_name) VALUES ($1, $2, $3, $4, $5, $6)',
-      [tenantId, companyId, userId, phone, firstName, lastName]
+      'INSERT INTO contacts (tenant_id, company_id, user_id, phone, first_name, last_name, email) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [tenantId, companyId, userId, phone, firstName, lastName, email]
     );
 
     // CREATE SYSTEM TICKET FOR APPROVAL
@@ -636,18 +658,24 @@ app.post('/api/admin/users/:id/approve', authenticateToken, authorizeRole('admin
 
     const { tenant_id, email, first_name, last_name } = userResult.rows[0];
 
-    // Create a company entry for the customer so they appear in "Kunden"
-    const companyResult = await pool.query(
-      'INSERT INTO companies (tenant_id, name) VALUES ($1, $2) RETURNING id',
-      [tenant_id, `${first_name} ${last_name}`]
-    );
-    const companyId = companyResult.rows[0].id;
+    // Check if a company already exists for this user (created during registration)
+    const existingContact = await pool.query('SELECT company_id FROM contacts WHERE user_id = $1', [id]);
+    let companyId = existingContact.rows.length > 0 ? existingContact.rows[0].company_id : null;
 
-    // Link the contact to this new company
-    await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, id]);
+    if (!companyId) {
+      // No company was created during registration - create one now
+      const companyResult = await pool.query(
+        'INSERT INTO companies (tenant_id, name, is_active) VALUES ($1, $2, true) RETURNING id',
+        [tenant_id, `${first_name} ${last_name}`]
+      );
+      companyId = companyResult.rows[0].id;
+
+      // Link the contact to this new company
+      await pool.query('UPDATE contacts SET company_id = $1 WHERE user_id = $2', [companyId, id]);
+    }
 
     // Close the related registration ticket if exists
-    await pool.query("UPDATE tickets SET status = 'closed' WHERE customer_id = $1 AND type = 'registration'", [id]);
+    await pool.query("UPDATE tickets SET status = 'closed' WHERE customer_id = $1 AND category = 'registration'", [id]);
 
     // Send Approval Email (Try-catch to prevent blocking approval if SMTP is not configured)
     try {
