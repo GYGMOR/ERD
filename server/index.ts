@@ -316,6 +316,7 @@ async function initDatabase() {
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS title TEXT').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS contract_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS tax_rate DECIMAL(5,2) DEFAULT 8.1').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_interval TEXT DEFAULT \'one_time\'').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS items JSONB').catch(() => {});
