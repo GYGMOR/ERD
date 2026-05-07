@@ -56,12 +56,11 @@ const stripe = process.env.STRIPE_SECRET_KEY
 if (!stripe) console.warn('WARNING: STRIPE_SECRET_KEY not set — payments disabled.');
 
 async function getOrCreateStripeCustomer(companyId: string): Promise<string> {
-  const comp = await pool.query('SELECT stripe_customer_id, name, email FROM companies WHERE id = $1', [companyId]);
+  const comp = await pool.query('SELECT stripe_customer_id, name FROM companies WHERE id = $1', [companyId]);
   if (!comp.rows[0]) throw new Error('Company not found');
   if (comp.rows[0].stripe_customer_id) return comp.rows[0].stripe_customer_id;
   const customer = await stripe!.customers.create({
     name: comp.rows[0].name,
-    email: comp.rows[0].email,
     metadata: { company_id: companyId },
   });
   await pool.query('UPDATE companies SET stripe_customer_id = $1 WHERE id = $2', [customer.id, companyId]);
@@ -314,6 +313,8 @@ async function initDatabase() {
     `).catch(() => {});
 
     // 8. Invoice & contract additions for proposal workflow
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_number TEXT').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS title TEXT').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_interval TEXT DEFAULT \'one_time\'').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS items JSONB').catch(() => {});
@@ -4201,7 +4202,7 @@ const sendContractExpiryWarnings = async () => {
   try {
     const expiring = await pool.query(`
       SELECT c.*, comp.name as company_name,
-        EXTRACT(DAY FROM (c.end_date - CURRENT_DATE)) as days_left
+        (c.end_date - CURRENT_DATE) as days_left
       FROM contracts c
       LEFT JOIN companies comp ON c.company_id = comp.id
       WHERE c.status = 'active'
@@ -4477,7 +4478,7 @@ app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedReq
            AND i.status = 'sent'
            AND i.invoice_number LIKE 'INV-%'`,
         [companyId]
-      ),
+      ).catch(() => ({ rows: [] as any[] })),
     ]);
 
     const all = [...propsRes.rows, ...legacyRes.rows].sort(
