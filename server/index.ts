@@ -3181,9 +3181,12 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
     const companyId = await getCompanyId(userId);
     if (!companyId) return res.json({ success: true, data: [] });
 
-    // Fetch structured contracts
-    const contractsRes = await pool.query('SELECT *, \'contract\' as source FROM contracts WHERE company_id = $1 ORDER BY start_date DESC', [companyId]);
-    
+    // Fetch structured contracts with company name and items
+    const contractsRes = await pool.query(
+      `SELECT c.*, co.name as company_name FROM contracts c LEFT JOIN companies co ON c.company_id=co.id WHERE c.company_id = $1 ORDER BY c.start_date DESC`,
+      [companyId]
+    );
+
     // Fetch uploaded files linked to company (that might be contracts)
     const filesRes = await pool.query('SELECT *, \'file\' as source FROM files WHERE entity_type = \'company\' AND entity_id = $1 ORDER BY created_at DESC', [companyId]);
 
@@ -3192,13 +3195,20 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
       ...contractsRes.rows.map(c => ({
         id: c.id,
         contract_number: c.contract_number || 'CON-' + c.id.substring(0, 8).toUpperCase(),
-        name: c.service_name || c.name,
+        name: c.service_name || c.name || c.title,
+        title: c.title || c.service_name || c.name,
         type: c.type || 'Service',
         status: c.status,
-        date: c.start_date,
+        date: c.start_date || c.created_at,
         source: 'contract',
-        monthly_value: c.monthly_price || 0,
-        payment_cycle: c.payment_cycle || 'Monatlich'
+        monthly_value: c.monthly_price || c.amount || 0,
+        payment_cycle: c.payment_cycle || c.billing_interval || 'Monatlich',
+        items: c.items,
+        company_name: c.company_name,
+        discount_percent: c.discount_percent || 0,
+        notes: c.notes,
+        total: c.amount || 0,
+        created_at: c.created_at,
       })),
       ...filesRes.rows.map(f => ({
         id: f.id,
@@ -4406,17 +4416,47 @@ app.post('/api/proposals/:id/send', authenticateToken, async (req: Authenticated
   } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// GET /api/portal/proposals — customer portal list
+// GET /api/portal/proposals — customer portal list (includes legacy INV- invoice quotes)
 app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
     const companyId = userRow.rows[0]?.company_id;
     if (!companyId) return res.json({ success: true, data: [] });
-    const r = await pool.query(
-      `SELECT p.*, c.name as company_name FROM proposals p LEFT JOIN companies c ON p.company_id=c.id WHERE p.company_id=$1 AND p.status IN ('sent','accepted','rejected','converted') ORDER BY p.created_at DESC`,
-      [companyId]
+
+    const [propsRes, legacyRes] = await Promise.all([
+      pool.query(
+        `SELECT p.*, c.name as company_name, false as _legacy FROM proposals p LEFT JOIN companies c ON p.company_id=c.id WHERE p.company_id=$1 AND p.status IN ('sent','accepted','rejected','converted')`,
+        [companyId]
+      ),
+      pool.query(
+        `SELECT i.id, i.tenant_id, i.company_id,
+           i.invoice_number as proposal_number,
+           COALESCE(i.title, 'Offerte') as title,
+           'sent' as status,
+           i.amount as total,
+           ROUND((i.amount / 1.081)::numeric, 2) as subtotal,
+           ROUND((i.amount - i.amount / 1.081)::numeric, 2) as tax_total,
+           0 as discount_percent,
+           i.notes,
+           i.due_date as valid_until,
+           i.items,
+           i.created_at,
+           NULL as signed_at,
+           co.name as company_name,
+           true as _legacy
+         FROM invoices i
+         LEFT JOIN companies co ON i.company_id=co.id
+         WHERE i.company_id=$1
+           AND i.status = 'sent'
+           AND i.invoice_number LIKE 'INV-%'`,
+        [companyId]
+      ),
+    ]);
+
+    const all = [...propsRes.rows, ...legacyRes.rows].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-    res.json({ success: true, data: r.rows });
+    res.json({ success: true, data: all });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
