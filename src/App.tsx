@@ -4,7 +4,8 @@ import { useMsal } from '@azure/msal-react';
 import {
   Home, Ticket, Users, FileText, Settings, LogOut, Sun, Moon, Menu, ChevronLeft,
   Search, FolderOpen, UserCheck, ShieldCheck, Activity,
-  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard, Calendar, Maximize, Minimize
+  Target, FileSignature, Package, Mail, BookOpen, Calculator, CreditCard, Calendar, Maximize, Minimize,
+  Clock, TrendingUp, MailOpen
 } from 'lucide-react';
 import { DashboardView } from './pages/DashboardView';
 import { TicketsView } from './pages/TicketsView';
@@ -30,6 +31,9 @@ import { GlobalLoginView } from './pages/GlobalLoginView';
 import { ClientLoginView } from './pages/ClientLoginView';
 import { DocumentsView } from './pages/DocumentsView';
 import { PerformanceView } from './pages/PerformanceView';
+import { TimeTrackingView } from './pages/TimeTrackingView';
+import { SalesPipelineView } from './pages/SalesPipelineView';
+import { EmailTemplatesView } from './pages/EmailTemplatesView';
 
 // --- Customer Portal Views ---
 import { CustomerLayout } from './layouts/CustomerLayout';
@@ -137,14 +141,22 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'Sales & Pipeline',
+    items: [
+      { to: '/pipeline', icon: TrendingUp, label: 'Sales Pipeline', roles: ['admin', 'manager'] },
+    ],
+  },
+  {
     label: 'Finance',
     items: [
       { to: '/accounting', icon: Calculator, label: 'Buchhaltung', roles: ['admin', 'manager'] },
+      { to: '/time-tracking', icon: Clock, label: 'Zeiterfassung', roles: ['admin', 'manager'] },
     ],
   },
   {
     label: 'Intern',
     items: [
+      { to: '/email-templates', icon: MailOpen, label: 'E-Mail Vorlagen', roles: ['admin'] },
       { to: '/business-card', icon: CreditCard, label: 'Visitenkarte', roles: ['admin', 'manager', 'employee'] },
       { to: '/users', icon: ShieldCheck, label: 'Benutzer', roles: ['admin', 'manager'] },
       { to: '/settings', icon: Settings, label: 'Einstellungen' },
@@ -460,6 +472,9 @@ const AppChild = () => {
               <Route path="/products" element={<ProductsView />} />
               <Route path="/newsletter" element={<NewsletterView />} />
               <Route path="/accounting" element={hasRole('admin', 'manager') ? <AccountingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+              <Route path="/time-tracking" element={hasRole('admin', 'manager') ? <TimeTrackingView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+              <Route path="/pipeline" element={hasRole('admin', 'manager') ? <SalesPipelineView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
+              <Route path="/email-templates" element={hasRole('admin') ? <EmailTemplatesView /> : <Placeholder title="Kein Zugriff" icon={Calculator} />} />
               <Route path="/business-card" element={isInternal() ? <BusinessCardView /> : <Placeholder title="Kein Zugriff" icon={CreditCard} />} />
               <Route path="/timeline" element={isInternal() ? <CustomerTimelineView /> : <Placeholder title="Kein Zugriff" icon={Activity} />} />
               <Route path="/users" element={hasRole('admin', 'manager') ? <UsersView /> : <Placeholder title="Kein Zugriff" icon={ShieldCheck} />} />

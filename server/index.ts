@@ -16,6 +16,7 @@ import { Resend } from 'resend';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Stripe from 'stripe';
+import { SwissQRBill } from 'swissqrbill/svg';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -353,6 +354,87 @@ async function initDatabase() {
     `).catch(() => {});
     await pool.query('ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS category TEXT DEFAULT \'Sonstiges\'').catch(() => {});
     await pool.query('ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS receipt_note TEXT').catch(() => {});
+
+    // Companies: IBAN + address fields for QR bill
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS iban TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS zip TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS city TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS country TEXT DEFAULT \'CH\'').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS phone TEXT').catch(() => {});
+
+    // Proposals: draft support + pipeline stage
+    await pool.query('ALTER TABLE proposals ADD COLUMN IF NOT EXISTS is_draft BOOLEAN DEFAULT TRUE').catch(() => {});
+    await pool.query('ALTER TABLE proposals ADD COLUMN IF NOT EXISTS pipeline_stage TEXT DEFAULT \'lead\'').catch(() => {});
+    await pool.query('ALTER TABLE proposals ADD COLUMN IF NOT EXISTS sent_at TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE proposals ADD COLUMN IF NOT EXISTS viewed_at TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE proposals ADD COLUMN IF NOT EXISTS pipeline_value DECIMAL(12,2) DEFAULT 0').catch(() => {});
+
+    // Time entries for Zeiterfassung
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS time_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL,
+        company_id UUID,
+        project_id UUID,
+        user_id UUID,
+        description TEXT NOT NULL,
+        hours DECIMAL(8,2) NOT NULL DEFAULT 0,
+        hourly_rate DECIMAL(10,2) DEFAULT 0,
+        date DATE NOT NULL DEFAULT CURRENT_DATE,
+        invoiced_at TIMESTAMP,
+        invoice_id UUID,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // Revenue goals
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS revenue_goals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL,
+        year INTEGER NOT NULL,
+        month INTEGER,
+        target_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(tenant_id, year, month)
+      )
+    `).catch(() => {});
+
+    // Audit log
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID,
+        user_id UUID,
+        user_email TEXT,
+        action TEXT NOT NULL,
+        resource_type TEXT,
+        resource_id TEXT,
+        details JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // Email templates
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID NOT NULL,
+        type TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        body_html TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(tenant_id, type)
+      )
+    `).catch(() => {});
+
+    // Contracts: renewal alert tracking
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS renewal_alert_30_sent BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS renewal_alert_60_sent BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS renewal_alert_90_sent BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS last_invoice_generated_at TIMESTAMP').catch(() => {});
 
     console.log('[INFO] Database initialization complete.');
   } catch (err) {
@@ -5055,6 +5137,628 @@ app.post('/api/stripe/webhook', async (req: express.Request, res: express.Respon
 
   res.json({ received: true });
 });
+
+// ─── Audit Log Helper ─────────────────────────────────────────────────────────
+async function logAudit(tenantId: string | undefined, userId: string | undefined, userEmail: string | undefined, action: string, resourceType: string, resourceId?: string, details?: object) {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (tenant_id, user_id, user_email, action, resource_type, resource_id, details) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [tenantId || null, userId || null, userEmail || null, action, resourceType, resourceId || null, details ? JSON.stringify(details) : null]
+    );
+  } catch {}
+}
+
+// ─── QR Bill & Document Generator ─────────────────────────────────────────────
+function generateQRBillSVG(amount: number, creditorIBAN: string, creditorName: string, creditorAddress: string, creditorZip: string, creditorCity: string, debtorName: string, debtorAddress: string, debtorZip: string, debtorCity: string): string {
+  try {
+    const data: any = {
+      currency: 'CHF',
+      amount,
+      creditor: {
+        name: creditorName,
+        address: creditorAddress,
+        zip: parseInt(creditorZip) || 6340,
+        city: creditorCity,
+        account: creditorIBAN.replace(/\s/g, ''),
+        country: 'CH',
+      },
+      debtor: {
+        name: debtorName,
+        address: debtorAddress || 'Unbekannte Adresse',
+        zip: parseInt(debtorZip) || 8000,
+        city: debtorCity || 'Zürich',
+        country: 'CH',
+      },
+    };
+    const qrBill = new SwissQRBill(data);
+    return qrBill.toString();
+  } catch (e: any) {
+    console.error('[QRBill]', e.message);
+    return '';
+  }
+}
+
+function generateDocumentHTML(opts: {
+  type: 'offer' | 'invoice';
+  number: string;
+  title: string;
+  date: string;
+  dueDate?: string;
+  validUntil?: string;
+  items: Array<{ description: string; quantity?: number; unit_price?: number; total?: number; }>;
+  subtotal: number;
+  taxTotal: number;
+  total: number;
+  discountPercent: number;
+  notes?: string;
+  companyName: string;
+  companyAddress?: string;
+  companyZip?: string;
+  companyCity?: string;
+  qrBillSVG: string;
+  logoUrl?: string;
+}): string {
+  const typeLabel = opts.type === 'offer' ? 'Offerte' : 'Rechnung';
+  const dateLabel = opts.type === 'offer' ? 'Gültig bis' : 'Fällig am';
+  const expiryDate = opts.type === 'offer' ? opts.validUntil : opts.dueDate;
+
+  const itemRows = opts.items.map(item => `
+    <tr>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;">${item.description || ''}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:center;">${item.quantity ?? 1}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;">CHF ${(item.unit_price ?? 0).toFixed(2)}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:600;">CHF ${(item.total ?? (item.quantity ?? 1) * (item.unit_price ?? 0)).toFixed(2)}</td>
+    </tr>`).join('');
+
+  const discountRow = opts.discountPercent > 0 ? `
+    <tr><td colspan="3" style="padding:6px 12px;text-align:right;color:#64748b;">Rabatt ${opts.discountPercent}%</td>
+    <td style="padding:6px 12px;text-align:right;color:#dc2626;">- CHF ${(opts.subtotal * opts.discountPercent / 100).toFixed(2)}</td></tr>` : '';
+
+  return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${typeLabel} ${opts.number}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color:#1e293b; background:#f8fafc; }
+  .page { max-width:800px; margin:0 auto; background:#fff; min-height:100vh; }
+  .header { background:#1e293b; color:#fff; padding:40px 48px 32px; display:flex; justify-content:space-between; align-items:flex-start; }
+  .brand { font-size:28px; font-weight:800; letter-spacing:-0.5px; }
+  .brand span { color:#38bdf8; }
+  .header-meta { text-align:right; font-size:13px; opacity:0.8; line-height:1.8; }
+  .doc-info { padding:40px 48px 24px; display:flex; justify-content:space-between; }
+  .doc-to h4 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; margin-bottom:8px; }
+  .doc-to p { font-size:16px; font-weight:700; color:#1e293b; }
+  .doc-to .sub { font-size:13px; color:#64748b; margin-top:2px; }
+  .doc-details { text-align:right; }
+  .doc-type { font-size:32px; font-weight:800; color:#1e293b; margin-bottom:8px; }
+  .doc-number { font-size:13px; color:#64748b; }
+  .meta-row { display:flex; gap:24px; margin-top:16px; justify-content:flex-end; }
+  .meta-item { text-align:right; }
+  .meta-item .label { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; }
+  .meta-item .value { font-size:13px; font-weight:600; color:#1e293b; margin-top:2px; }
+  .items-section { padding:0 48px; }
+  table { width:100%; border-collapse:collapse; }
+  thead tr { background:#f1f5f9; }
+  thead th { padding:12px 12px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748b; }
+  thead th:last-child, thead th:nth-child(3) { text-align:right; }
+  thead th:nth-child(2) { text-align:center; }
+  .totals { padding:24px 48px; border-top:1px solid #e2e8f0; margin-top:16px; }
+  .totals-inner { max-width:300px; margin-left:auto; }
+  .total-row { display:flex; justify-content:space-between; padding:6px 0; font-size:13px; color:#64748b; }
+  .total-final { display:flex; justify-content:space-between; padding:12px 0; font-size:18px; font-weight:800; color:#1e293b; border-top:2px solid #1e293b; margin-top:8px; }
+  .notes { padding:0 48px 32px; }
+  .notes h4 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#94a3b8; margin-bottom:8px; }
+  .notes p { font-size:13px; color:#64748b; line-height:1.6; }
+  .qr-section { margin-top:auto; border-top:3px solid #e2e8f0; }
+  .qr-section svg { width:100%; height:auto; }
+  .print-btn { position:fixed; bottom:24px; right:24px; background:#1e293b; color:#fff; border:none; padding:14px 28px; border-radius:12px; font-size:15px; font-weight:700; cursor:pointer; box-shadow:0 8px 32px rgba(0,0,0,0.2); }
+  .print-btn:hover { background:#0f172a; }
+  @media print {
+    body { background:#fff; }
+    .print-btn { display:none; }
+    .page { box-shadow:none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div>
+      <div class="brand">HED<span>-IT</span></div>
+      <div style="font-size:12px;opacity:0.7;margin-top:4px;">IT-Dienstleistungen & Webentwicklung</div>
+    </div>
+    <div class="header-meta">
+      <div>Baar, Schweiz</div>
+      <div>info@hed-it.ch</div>
+      <div>hed-it.ch</div>
+    </div>
+  </div>
+
+  <div class="doc-info">
+    <div class="doc-to">
+      <h4>An</h4>
+      <p>${opts.companyName}</p>
+      ${opts.companyAddress ? `<div class="sub">${opts.companyAddress}</div>` : ''}
+      ${opts.companyZip || opts.companyCity ? `<div class="sub">${opts.companyZip || ''} ${opts.companyCity || ''}</div>` : ''}
+    </div>
+    <div class="doc-details">
+      <div class="doc-type">${typeLabel}</div>
+      <div class="doc-number">${opts.number}</div>
+      <div class="meta-row">
+        <div class="meta-item">
+          <div class="label">Datum</div>
+          <div class="value">${opts.date}</div>
+        </div>
+        ${expiryDate ? `<div class="meta-item"><div class="label">${dateLabel}</div><div class="value">${expiryDate}</div></div>` : ''}
+      </div>
+    </div>
+  </div>
+
+  <div class="items-section">
+    <div style="font-size:20px;font-weight:700;margin-bottom:20px;color:#1e293b;">${opts.title}</div>
+    <table>
+      <thead><tr>
+        <th>Beschreibung</th>
+        <th style="text-align:center">Menge</th>
+        <th style="text-align:right">Einzelpreis</th>
+        <th style="text-align:right">Betrag</th>
+      </tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table>
+  </div>
+
+  <div class="totals">
+    <div class="totals-inner">
+      <div class="total-row"><span>Subtotal (exkl. MwSt.)</span><span>CHF ${opts.subtotal.toFixed(2)}</span></div>
+      ${discountRow}
+      <div class="total-row"><span>MwSt. 8.1%</span><span>CHF ${opts.taxTotal.toFixed(2)}</span></div>
+      <div class="total-final"><span>Total CHF</span><span>${opts.total.toFixed(2)}</span></div>
+    </div>
+  </div>
+
+  ${opts.notes ? `<div class="notes"><h4>Bemerkungen</h4><p>${opts.notes}</p></div>` : ''}
+
+  ${opts.qrBillSVG ? `<div class="qr-section">${opts.qrBillSVG}</div>` : ''}
+</div>
+<button class="print-btn" onclick="window.print()">🖨️ Drucken / PDF speichern</button>
+</body>
+</html>`;
+}
+
+// GET /api/proposals/:id/document — HTML invoice/offer with QR bill (token in query)
+app.get('/api/proposals/:id/document', async (req: express.Request, res: express.Response) => {
+  const token = req.query.token as string;
+  if (!token) return res.status(401).send('Unauthorized');
+  let decoded: any;
+  try { decoded = jwt.verify(token, JWT_SECRET); } catch { return res.status(403).send('Invalid token'); }
+  try {
+    const r = await pool.query(`SELECT p.*, co.name as company_name, co.address as company_address, co.zip as company_zip, co.city as company_city
+      FROM proposals p LEFT JOIN companies co ON p.company_id = co.id WHERE p.id = $1`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).send('Not found');
+    const p = r.rows[0];
+    const items = typeof p.items === 'string' ? JSON.parse(p.items || '[]') : (p.items || []);
+
+    const creditorIBAN = process.env.COMPANY_IBAN || 'CH5604835012345678009';
+    const qrSVG = p.status === 'converted' ? generateQRBillSVG(
+      parseFloat(p.total), creditorIBAN, 'HED-IT Joel Hediger', 'Baar', '6340', 'Baar',
+      p.company_name || 'Kunde', p.company_address || '', p.company_zip || '8000', p.company_city || 'Zürich'
+    ) : '';
+
+    const html = generateDocumentHTML({
+      type: p.status === 'converted' ? 'invoice' : 'offer',
+      number: p.proposal_number || p.id.substring(0, 8),
+      title: p.title,
+      date: new Date(p.created_at).toLocaleDateString('de-CH'),
+      dueDate: p.valid_until ? new Date(p.valid_until).toLocaleDateString('de-CH') : undefined,
+      validUntil: p.valid_until ? new Date(p.valid_until).toLocaleDateString('de-CH') : undefined,
+      items,
+      subtotal: parseFloat(p.subtotal) || 0,
+      taxTotal: parseFloat(p.tax_total) || 0,
+      total: parseFloat(p.total) || 0,
+      discountPercent: parseFloat(p.discount_percent) || 0,
+      notes: p.notes,
+      companyName: p.company_name || 'Kunde',
+      companyAddress: p.company_address,
+      companyZip: p.company_zip,
+      companyCity: p.company_city,
+      qrBillSVG: qrSVG,
+    });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err: any) { res.status(500).send(err.message); }
+});
+
+// GET /api/invoices/:id/document — HTML invoice with QR bill
+app.get('/api/invoices/:id/document', async (req: express.Request, res: express.Response) => {
+  const token = req.query.token as string;
+  if (!token) return res.status(401).send('Unauthorized');
+  try { jwt.verify(token, JWT_SECRET); } catch { return res.status(403).send('Invalid token'); }
+  try {
+    const r = await pool.query(`SELECT i.*, co.name as company_name, co.address as company_address, co.zip as company_zip, co.city as company_city
+      FROM invoices i LEFT JOIN companies co ON i.company_id = co.id WHERE i.id = $1`, [req.params.id]);
+    if (!r.rows[0]) return res.status(404).send('Not found');
+    const inv = r.rows[0];
+    const items = typeof inv.items === 'string' ? JSON.parse(inv.items || '[]') : (inv.items || []);
+    const amount = parseFloat(inv.amount) || 0;
+    const subtotal = parseFloat((amount / 1.081).toFixed(2));
+    const taxTotal = parseFloat((amount - subtotal).toFixed(2));
+
+    const creditorIBAN = process.env.COMPANY_IBAN || 'CH5604835012345678009';
+    const qrSVG = generateQRBillSVG(
+      amount, creditorIBAN, 'HED-IT Joel Hediger', 'Baar', '6340', 'Baar',
+      inv.company_name || 'Kunde', inv.company_address || '', inv.company_zip || '8000', inv.company_city || 'Zürich'
+    );
+    const html = generateDocumentHTML({
+      type: 'invoice',
+      number: inv.invoice_number || inv.id.substring(0, 8),
+      title: inv.title || 'Rechnung',
+      date: new Date(inv.created_at).toLocaleDateString('de-CH'),
+      dueDate: inv.due_date ? new Date(inv.due_date).toLocaleDateString('de-CH') : undefined,
+      items: items.length ? items : [{ description: inv.title || 'Leistung', quantity: 1, unit_price: subtotal, total: subtotal }],
+      subtotal,
+      taxTotal,
+      total: amount,
+      discountPercent: 0,
+      companyName: inv.company_name || 'Kunde',
+      companyAddress: inv.company_address,
+      companyZip: inv.company_zip,
+      companyCity: inv.company_city,
+      qrBillSVG: qrSVG,
+    });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err: any) { res.status(500).send(err.message); }
+});
+
+// ─── Stripe Checkout Session ───────────────────────────────────────────────────
+app.post('/api/stripe/checkout-session', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  if (!stripe) return res.status(503).json({ error: 'Stripe nicht konfiguriert.' });
+  const { invoice_id, proposal_id, success_url, cancel_url } = req.body;
+  try {
+    let amount = 0, description = '', entityId = '', entityType = '';
+    if (invoice_id) {
+      const inv = await pool.query('SELECT * FROM invoices WHERE id = $1', [invoice_id]);
+      if (!inv.rows[0]) return res.status(404).json({ error: 'Rechnung nicht gefunden' });
+      amount = Math.round(parseFloat(inv.rows[0].amount) * 100);
+      description = inv.rows[0].title || `Rechnung ${inv.rows[0].invoice_number || invoice_id.substring(0,8)}`;
+      entityId = invoice_id; entityType = 'invoice';
+    } else if (proposal_id) {
+      const prop = await pool.query('SELECT * FROM proposals WHERE id = $1', [proposal_id]);
+      if (!prop.rows[0]) return res.status(404).json({ error: 'Offerte nicht gefunden' });
+      amount = Math.round(parseFloat(prop.rows[0].total) * 100);
+      description = prop.rows[0].title || `Offerte ${proposal_id.substring(0,8)}`;
+      entityId = proposal_id; entityType = 'proposal';
+    }
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
+    const customerId = companyId ? await getOrCreateStripeCustomer(companyId) : undefined;
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      customer: customerId,
+      line_items: [{ price_data: { currency: 'chf', product_data: { name: description }, unit_amount: amount }, quantity: 1 }],
+      mode: 'payment',
+      success_url: success_url || 'https://portal.hed-it.ch/portal/invoices?payment=success',
+      cancel_url: cancel_url || 'https://portal.hed-it.ch/portal/invoices?payment=cancel',
+      metadata: { entity_type: entityType, entity_id: entityId },
+    });
+    res.json({ success: true, url: session.url });
+  } catch (err: any) {
+    console.error('Checkout session error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
+// ─── Time Tracking (Zeiterfassung) ────────────────────────────────────────────
+app.get('/api/time-entries', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { company_id, invoiced, from, to } = req.query;
+    let where = 'WHERE t.tenant_id = $1';
+    const params: any[] = [req.user!.tenant_id];
+    if (company_id) { params.push(company_id); where += ` AND t.company_id = $${params.length}`; }
+    if (invoiced === 'false') { where += ' AND t.invoiced_at IS NULL'; }
+    if (invoiced === 'true') { where += ' AND t.invoiced_at IS NOT NULL'; }
+    if (from) { params.push(from); where += ` AND t.date >= $${params.length}`; }
+    if (to) { params.push(to); where += ` AND t.date <= $${params.length}`; }
+
+    const r = await pool.query(`
+      SELECT t.*, co.name as company_name, p.name as project_name, u.first_name || ' ' || u.last_name as user_name
+      FROM time_entries t
+      LEFT JOIN companies co ON t.company_id = co.id
+      LEFT JOIN projects p ON t.project_id = p.id
+      LEFT JOIN users u ON t.user_id = u.id
+      ${where} ORDER BY t.date DESC, t.created_at DESC`, params);
+    res.json({ success: true, data: r.rows });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.post('/api/time-entries', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { company_id, project_id, description, hours, hourly_rate, date } = req.body;
+  if (!description || !hours) return res.status(400).json({ error: 'Beschreibung und Stunden erforderlich' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO time_entries (tenant_id, company_id, project_id, user_id, description, hours, hourly_rate, date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [req.user!.tenant_id, company_id || null, project_id || null, req.user!.id, description, hours, hourly_rate || 0, date || new Date().toISOString().split('T')[0]]
+    );
+    await logAudit(req.user!.tenant_id, req.user!.id, req.user!.email, 'create', 'time_entry', r.rows[0].id, { description, hours });
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.put('/api/time-entries/:id', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { description, hours, hourly_rate, date, company_id, project_id } = req.body;
+  try {
+    const r = await pool.query(
+      `UPDATE time_entries SET description=$1, hours=$2, hourly_rate=$3, date=$4, company_id=$5, project_id=$6 WHERE id=$7 AND tenant_id=$8 RETURNING *`,
+      [description, hours, hourly_rate || 0, date, company_id || null, project_id || null, req.params.id, req.user!.tenant_id]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.delete('/api/time-entries/:id', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    await pool.query('DELETE FROM time_entries WHERE id=$1 AND tenant_id=$2', [req.params.id, req.user!.tenant_id]);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// POST /api/time-entries/to-invoice — generate proposal/invoice from uninvoiced time entries
+app.post('/api/time-entries/to-invoice', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { company_id, entry_ids, hourly_rate_override, title } = req.body;
+  if (!company_id || !entry_ids?.length) return res.status(400).json({ error: 'company_id und entry_ids erforderlich' });
+  try {
+    const entries = await pool.query(
+      `SELECT * FROM time_entries WHERE id = ANY($1::uuid[]) AND tenant_id=$2 AND invoiced_at IS NULL`,
+      [entry_ids, req.user!.tenant_id]
+    );
+    if (!entries.rows.length) return res.status(400).json({ error: 'Keine uninvoizierten Einträge gefunden' });
+
+    const items = entries.rows.map(e => ({
+      description: `${e.date} – ${e.description}`,
+      quantity: parseFloat(e.hours),
+      unit: 'h',
+      unit_price: parseFloat(hourly_rate_override || e.hourly_rate || 0),
+      total: parseFloat(e.hours) * parseFloat(hourly_rate_override || e.hourly_rate || 0),
+    }));
+    const subtotal = items.reduce((s, i) => s + i.total, 0);
+    const taxTotal = parseFloat((subtotal * 0.081).toFixed(2));
+    const total = parseFloat((subtotal + taxTotal).toFixed(2));
+
+    const propNum = 'OF-' + Date.now().toString().slice(-6);
+    const propRes = await pool.query(
+      `INSERT INTO proposals (tenant_id, company_id, proposal_number, title, status, items, subtotal, tax_total, total, is_draft, created_by) VALUES ($1,$2,$3,$4,'draft',$5,$6,$7,$8,TRUE,$9) RETURNING *`,
+      [req.user!.tenant_id, company_id, propNum, title || 'Rechnung Zeiterfassung', JSON.stringify(items), subtotal, taxTotal, total, req.user!.id]
+    );
+    // Mark entries as invoiced
+    await pool.query(`UPDATE time_entries SET invoiced_at=NOW(), invoice_id=$1 WHERE id = ANY($2::uuid[])`, [propRes.rows[0].id, entry_ids]);
+    res.json({ success: true, data: propRes.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Revenue Goals ─────────────────────────────────────────────────────────────
+app.get('/api/revenue-goals', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const year = req.query.year || new Date().getFullYear();
+    const r = await pool.query('SELECT * FROM revenue_goals WHERE tenant_id=$1 AND year=$2 ORDER BY month ASC NULLS FIRST', [req.user!.tenant_id, year]);
+    res.json({ success: true, data: r.rows });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.post('/api/revenue-goals', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { year, month, target_amount } = req.body;
+  try {
+    const r = await pool.query(
+      `INSERT INTO revenue_goals (tenant_id, year, month, target_amount) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (tenant_id, year, month) DO UPDATE SET target_amount=$4, updated_at=NOW() RETURNING *`,
+      [req.user!.tenant_id, year || new Date().getFullYear(), month || null, target_amount]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Audit Log ─────────────────────────────────────────────────────────────────
+app.get('/api/audit-log', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { resource_type, limit = 100, offset = 0 } = req.query;
+    let where = 'WHERE tenant_id=$1';
+    const params: any[] = [req.user!.tenant_id];
+    if (resource_type) { params.push(resource_type); where += ` AND resource_type=$${params.length}`; }
+    params.push(limit); params.push(offset);
+    const r = await pool.query(`SELECT * FROM audit_logs ${where} ORDER BY created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
+    res.json({ success: true, data: r.rows });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Two-step Proposal: Send Draft ───────────────────────────────────────────
+app.post('/api/proposals/:id/send', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const prop = await pool.query('SELECT p.*, co.name as company_name FROM proposals p LEFT JOIN companies co ON p.company_id=co.id WHERE p.id=$1 AND p.tenant_id=$2', [req.params.id, req.user!.tenant_id]);
+    if (!prop.rows[0]) return res.status(404).json({ error: 'Offerte nicht gefunden' });
+    const p = prop.rows[0];
+
+    await pool.query(`UPDATE proposals SET status='sent', is_draft=FALSE, sent_at=NOW(), updated_at=NOW() WHERE id=$1`, [req.params.id]);
+
+    // Get recipient email
+    const contact = await pool.query('SELECT email, first_name FROM contacts WHERE company_id=$1 AND is_primary=TRUE LIMIT 1', [p.company_id]);
+    const recipientEmail = contact.rows[0]?.email;
+    const firstName = contact.rows[0]?.first_name || p.company_name;
+
+    if (recipientEmail && resendApiKey) {
+      await resend.emails.send({
+        from: EMAIL_NO_REPLY,
+        to: recipientEmail,
+        subject: `Ihre Offerte ${p.proposal_number} von HED-IT`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
+          <div style="background:#1e293b;padding:32px;text-align:center">
+            <h1 style="color:#fff;margin:0">HED-IT</h1>
+          </div>
+          <div style="padding:32px;background:#f8fafc">
+            <p>Guten Tag ${firstName}</p>
+            <p>Ich freue mich, Ihnen unsere Offerte <strong>${p.proposal_number}</strong> zukommen zu lassen.</p>
+            <p style="font-size:24px;font-weight:bold;color:#1e293b">CHF ${parseFloat(p.total).toFixed(2)}</p>
+            <a href="https://portal.hed-it.ch/portal/offers" style="display:inline-block;background:#1e293b;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:700;margin-top:16px">Offerte ansehen & signieren →</a>
+            <p style="margin-top:24px;color:#64748b;font-size:13px">Fragen? Antworten Sie einfach auf diese E-Mail.</p>
+          </div>
+        </div>`,
+      });
+    }
+
+    await logAudit(req.user!.tenant_id, req.user!.id, req.user!.email, 'send', 'proposal', req.params.id, { title: p.title });
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// PATCH /api/proposals/:id/stage — update pipeline stage
+app.patch('/api/proposals/:id/stage', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { stage } = req.body;
+  const validStages = ['lead', 'qualified', 'proposal_sent', 'negotiation', 'won', 'lost'];
+  if (!validStages.includes(stage)) return res.status(400).json({ error: 'Ungültige Stage' });
+  try {
+    await pool.query('UPDATE proposals SET pipeline_stage=$1, updated_at=NOW() WHERE id=$2 AND tenant_id=$3', [stage, req.params.id, req.user!.tenant_id]);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Email Templates ──────────────────────────────────────────────────────────
+app.get('/api/email-templates', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const r = await pool.query('SELECT * FROM email_templates WHERE tenant_id=$1 ORDER BY type', [req.user!.tenant_id]);
+    res.json({ success: true, data: r.rows });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.post('/api/email-templates', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { type, subject, body_html } = req.body;
+  if (!type || !subject || !body_html) return res.status(400).json({ error: 'type, subject, body_html erforderlich' });
+  try {
+    const r = await pool.query(
+      `INSERT INTO email_templates (tenant_id, type, subject, body_html) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (tenant_id, type) DO UPDATE SET subject=$3, body_html=$4, updated_at=NOW() RETURNING *`,
+      [req.user!.tenant_id, type, subject, body_html]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+app.delete('/api/email-templates/:id', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    await pool.query('DELETE FROM email_templates WHERE id=$1 AND tenant_id=$2', [req.params.id, req.user!.tenant_id]);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Company Settings (IBAN etc.) ─────────────────────────────────────────────
+app.patch('/api/company-settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { iban, address, zip, city, phone, website } = req.body;
+  try {
+    // Update the first company linked to this tenant
+    const compResult = await pool.query('SELECT id FROM companies WHERE tenant_id=$1 LIMIT 1', [req.user!.tenant_id]);
+    if (!compResult.rows[0]) return res.status(404).json({ error: 'Keine Firma gefunden' });
+    const r = await pool.query(
+      `UPDATE companies SET iban=COALESCE($1,iban), address=COALESCE($2,address), zip=COALESCE($3,zip), city=COALESCE($4,city), phone=COALESCE($5,phone), website=COALESCE($6,website) WHERE id=$7 RETURNING *`,
+      [iban || null, address || null, zip || null, city || null, phone || null, website || null, compResult.rows[0].id]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// ─── Recurring Invoice Auto-Generation Cron ───────────────────────────────────
+const generateRecurringInvoices = async () => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const contracts = await pool.query(`
+      SELECT c.*, co.name as company_name
+      FROM contracts c LEFT JOIN companies co ON c.company_id = co.id
+      WHERE c.status = 'active'
+        AND c.billing_interval IN ('monthly', 'quarterly', 'yearly')
+        AND c.amount > 0
+        AND (c.next_invoice_date IS NULL OR c.next_invoice_date <= $1)
+        AND (c.end_date IS NULL OR c.end_date >= $1)
+    `, [today]);
+
+    for (const c of contracts.rows) {
+      try {
+        const invNum = 'RE-' + Date.now().toString().slice(-6);
+        let dueDate = new Date();
+        dueDate.setDate(dueDate.getDate() + 30);
+
+        await pool.query(
+          `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, amount, status, contract_id, due_date, is_recurring, billing_interval, created_at)
+           VALUES ($1,$2,$3,$4,$5,'open',$6,$7,TRUE,$8,NOW())`,
+          [c.tenant_id, c.company_id, invNum, `${c.name || 'Vertrag'} – ${new Date().toLocaleDateString('de-CH', { month: 'long', year: 'numeric' })}`,
+           c.amount, c.id, dueDate.toISOString().split('T')[0], c.billing_interval]
+        );
+
+        let nextDate = new Date();
+        if (c.billing_interval === 'monthly') nextDate.setMonth(nextDate.getMonth() + 1);
+        else if (c.billing_interval === 'quarterly') nextDate.setMonth(nextDate.getMonth() + 3);
+        else if (c.billing_interval === 'yearly') nextDate.setFullYear(nextDate.getFullYear() + 1);
+
+        await pool.query('UPDATE contracts SET next_invoice_date=$1, last_invoice_generated_at=NOW() WHERE id=$2', [nextDate.toISOString().split('T')[0], c.id]);
+
+        await createNotification({ tenant_id: c.tenant_id, target_role: 'admin', type: 'invoice', entity_id: c.id,
+          title: 'Wiederkehrende Rechnung erstellt', message: `Rechnung ${invNum} für ${c.company_name} automatisch erstellt.`, link: '/accounting' });
+        console.log(`[Recurring] Created invoice ${invNum} for contract ${c.id}`);
+      } catch (e: any) { console.error('[Recurring] Contract error:', c.id, e.message); }
+    }
+  } catch (err: any) { console.error('[Recurring] Cron error:', err.message); }
+};
+
+// ─── Contract Renewal Alerts Cron ─────────────────────────────────────────────
+const sendContractRenewalAlerts = async () => {
+  try {
+    const contracts = await pool.query(`
+      SELECT c.*, co.name as company_name
+      FROM contracts c LEFT JOIN companies co ON c.company_id = co.id
+      WHERE c.status = 'active' AND c.end_date IS NOT NULL
+    `);
+
+    for (const c of contracts.rows) {
+      const daysLeft = Math.ceil((new Date(c.end_date).getTime() - Date.now()) / 86400000);
+
+      if (daysLeft <= 90 && daysLeft > 60 && !c.renewal_alert_90_sent) {
+        await pool.query('UPDATE contracts SET renewal_alert_90_sent=TRUE WHERE id=$1', [c.id]);
+        await createNotification({ tenant_id: c.tenant_id, target_role: 'admin', type: 'contract', entity_id: c.id,
+          title: '⏰ Vertrag läuft in 90 Tagen aus', message: `Vertrag mit ${c.company_name} läuft am ${new Date(c.end_date).toLocaleDateString('de-CH')} aus.`, link: '/contracts' });
+        if (resendApiKey) {
+          await resend.emails.send({ from: EMAIL_NO_REPLY, to: EMAIL_ADMIN_INTERNAL,
+            subject: `Vertrag läuft in 90 Tagen aus: ${c.company_name}`,
+            html: `<p>Der Vertrag mit <b>${c.company_name}</b> läuft am <b>${new Date(c.end_date).toLocaleDateString('de-CH')}</b> aus (in 90 Tagen).</p><p>Jetzt Verlängerung besprechen?</p>` });
+        }
+      }
+      if (daysLeft <= 60 && daysLeft > 30 && !c.renewal_alert_60_sent) {
+        await pool.query('UPDATE contracts SET renewal_alert_60_sent=TRUE WHERE id=$1', [c.id]);
+        await createNotification({ tenant_id: c.tenant_id, target_role: 'admin', type: 'contract', entity_id: c.id,
+          title: '⚠️ Vertrag läuft in 60 Tagen aus', message: `Vertrag mit ${c.company_name} läuft in 60 Tagen aus!`, link: '/contracts' });
+        if (resendApiKey) {
+          await resend.emails.send({ from: EMAIL_NO_REPLY, to: EMAIL_ADMIN_INTERNAL,
+            subject: `Vertrag läuft in 60 Tagen aus: ${c.company_name}`,
+            html: `<p><b>Achtung:</b> Vertrag mit <b>${c.company_name}</b> läuft in 60 Tagen aus.</p>` });
+        }
+      }
+      if (daysLeft <= 30 && daysLeft > 0 && !c.renewal_alert_30_sent) {
+        await pool.query('UPDATE contracts SET renewal_alert_30_sent=TRUE WHERE id=$1', [c.id]);
+        await createNotification({ tenant_id: c.tenant_id, target_role: 'admin', type: 'contract', entity_id: c.id,
+          title: '🔴 Vertrag läuft in 30 Tagen aus!', message: `Dringend: Vertrag mit ${c.company_name} läuft in ${daysLeft} Tagen aus!`, link: '/contracts' });
+        if (resendApiKey) {
+          await resend.emails.send({ from: EMAIL_NO_REPLY, to: EMAIL_ADMIN_INTERNAL,
+            subject: `🔴 Vertrag läuft bald aus: ${c.company_name}`,
+            html: `<p><b>Dringend:</b> Vertrag mit <b>${c.company_name}</b> läuft in <b>${daysLeft} Tagen</b> aus!</p>` });
+        }
+      }
+    }
+  } catch (err: any) { console.error('[ContractAlerts] Error:', err.message); }
+};
+
+// Start recurring crons (daily at startup + interval)
+setInterval(generateRecurringInvoices, 24 * 60 * 60 * 1000);
+setInterval(sendContractRenewalAlerts, 24 * 60 * 60 * 1000);
+generateRecurringInvoices();
+sendContractRenewalAlerts();
 
 // For any other request, serve the index.html (Client Side Routing)
 app.get(/.*/, (req, res) => {

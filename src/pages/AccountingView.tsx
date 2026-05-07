@@ -39,7 +39,7 @@ const STATUS_CFG: Record<string, { label: string; color: string; Icon: any }> = 
   draft:   { label: 'Entwurf',    color: '#94a3b8', Icon: XCircle },
 };
 
-const TABS = ['Übersicht', 'Rechnungen', 'Ausgaben', 'MwSt', 'Berichte'] as const;
+const TABS = ['Übersicht', 'Rechnungen', 'Ausgaben', 'MwSt', 'Berichte', 'Ziele', 'Audit'] as const;
 type Tab = typeof TABS[number];
 
 const fmt = (n: number) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -57,6 +57,12 @@ export const AccountingView = () => {
   const [forecast, setForecast] = useState<any>(null);
   const [mwst, setMwst] = useState<any>(null);
   const [mwstYear, setMwstYear] = useState(new Date().getFullYear());
+  const [goals, setGoals] = useState<any[]>([]);
+  const [auditLog, setAuditLog] = useState<any[]>([]);
+  const [goalYear, setGoalYear] = useState(new Date().getFullYear());
+  const [newGoalMonth, setNewGoalMonth] = useState('');
+  const [newGoalAmount, setNewGoalAmount] = useState('');
+  const [savingGoal, setSavingGoal] = useState(false);
   const [search, setSearch] = useState('');
   const [markingPaid, setMarkingPaid] = useState<string | null>(null);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
@@ -82,8 +88,29 @@ export const AccountingView = () => {
     if (r.success) setMwst(r.data);
   };
 
+  const fetchGoals = async (year: number) => {
+    const r = await fetch(`/api/revenue-goals?year=${year}`, { headers: h }).then(r => r.json());
+    if (r.success) setGoals(r.data);
+  };
+
+  const fetchAudit = async () => {
+    const r = await fetch(`/api/audit-log?limit=50`, { headers: h }).then(r => r.json());
+    if (r.success) setAuditLog(r.data);
+  };
+
+  const saveGoal = async () => {
+    if (!newGoalAmount) return;
+    setSavingGoal(true);
+    await fetch('/api/revenue-goals', { method: 'POST', headers: h, body: JSON.stringify({ year: goalYear, month: newGoalMonth ? parseInt(newGoalMonth) : null, target_amount: parseFloat(newGoalAmount) }) });
+    setSavingGoal(false); setNewGoalAmount(''); setNewGoalMonth('');
+    fetchGoals(goalYear);
+  };
+
   useEffect(() => { fetchAll(); }, []);
   useEffect(() => { fetchMwst(mwstYear); }, [mwstYear]);
+  useEffect(() => { fetchGoals(goalYear); }, [goalYear]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (tab === 'Audit') fetchAudit(); }, [tab]);
 
   const markPaid = async (entry: Entry) => {
     if (!entry.invoice_id) return;
@@ -518,6 +545,92 @@ export const AccountingView = () => {
       )}
 
       {/* ── Expense Modal ── */}
+      {/* ── TAB: Ziele ── */}
+      {tab === 'Ziele' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Umsatzziele {goalYear}</h3>
+            <select value={goalYear} onChange={e => setGoalYear(parseInt(e.target.value))} className="input-field" style={{ width: 100 }}>
+              {[2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+
+          {/* Add goal */}
+          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 16, padding: 20, marginBottom: 24, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div>
+              <label style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>Monat (leer = Jahresziel)</label>
+              <select value={newGoalMonth} onChange={e => setNewGoalMonth(e.target.value)} className="input-field" style={{ width: 140 }}>
+                <option value="">Jahresziel</option>
+                {['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'].map((m,i) => <option key={i} value={i+1}>{m}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 12, color: 'var(--color-text-muted)', display: 'block', marginBottom: 4 }}>Ziel CHF</label>
+              <input type="number" value={newGoalAmount} onChange={e => setNewGoalAmount(e.target.value)} className="input-field" placeholder="z.B. 5000" style={{ width: 140 }} />
+            </div>
+            <button onClick={saveGoal} disabled={savingGoal || !newGoalAmount} className="btn-primary" style={{ height: 40 }}>
+              {savingGoal ? 'Speichern...' : 'Ziel setzen'}
+            </button>
+          </div>
+
+          {/* Goals list */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px,1fr))', gap: 16 }}>
+            {goals.map(g => {
+              const monthLabel = g.month ? ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'][g.month-1] : 'Jahresziel';
+              const actual = g.month
+                ? invoices.filter(inv => inv.status === 'paid' && new Date(inv.date).getMonth() + 1 === g.month && new Date(inv.date).getFullYear() === goalYear).reduce((s, e) => s + parseFloat(e.amount || '0'), 0)
+                : paidRev;
+              const pct = Math.min(100, Math.round((actual / parseFloat(g.target_amount)) * 100));
+              const color = pct >= 100 ? '#10b981' : pct >= 70 ? '#f59e0b' : '#ef4444';
+              return (
+                <div key={g.id} style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 16, padding: 20 }}>
+                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 4 }}>{monthLabel} {goalYear}</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color }}>{pct}%</div>
+                  <div style={{ height: 6, background: 'var(--color-border)', borderRadius: 3, margin: '8px 0' }}>
+                    <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width 0.6s' }} />
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                    <span style={{ color: 'var(--color-text-muted)' }}>Ist: CHF {fmt(actual)}</span>
+                    <span style={{ fontWeight: 600 }}>Ziel: CHF {fmt(parseFloat(g.target_amount))}</span>
+                  </div>
+                </div>
+              );
+            })}
+            {goals.length === 0 && <div style={{ color: 'var(--color-text-muted)', gridColumn: '1/-1', textAlign: 'center', padding: 40 }}>Noch keine Ziele gesetzt.</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── TAB: Audit ── */}
+      {tab === 'Audit' && (
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 20 }}>Aktivitäts-Protokoll</h3>
+          <div style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: 16, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--color-surface-hover)' }}>
+                  {['Zeitpunkt','Benutzer','Aktion','Ressource','Details'].map(h => (
+                    <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: 11, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--color-text-muted)', fontWeight: 600 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {auditLog.map((log, i) => (
+                  <tr key={log.id} style={{ borderTop: '1px solid var(--color-border)', background: i % 2 === 0 ? 'transparent' : 'var(--color-surface-hover)' }}>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--color-text-muted)' }}>{new Date(log.created_at).toLocaleString('de-CH', { day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit' })}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13 }}>{log.user_email || '–'}</td>
+                    <td style={{ padding: '10px 16px' }}><span style={{ background: 'rgba(59,130,246,0.1)', color: '#3b82f6', borderRadius: 6, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>{log.action}</span></td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--color-text-muted)' }}>{log.resource_type}{log.resource_id ? ` #${log.resource_id.substring(0,8)}` : ''}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--color-text-muted)' }}>{log.details ? JSON.stringify(log.details).substring(0,80) : '–'}</td>
+                  </tr>
+                ))}
+                {auditLog.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: 40, color: 'var(--color-text-muted)' }}>Keine Einträge.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {showExpenseModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="card" style={{ width: 520, padding: 28, maxHeight: '90vh', overflowY: 'auto' }}>
