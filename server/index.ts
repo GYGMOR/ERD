@@ -2926,12 +2926,14 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
     const merged = [
       ...contractsRes.rows.map(c => ({
         id: c.id,
+        contract_number: c.contract_number || 'CON-' + c.id.substring(0, 8).toUpperCase(),
         name: c.service_name || c.name,
         type: c.type || 'Service',
         status: c.status,
         date: c.start_date,
         source: 'contract',
-        amount: c.monthly_price || 0
+        monthly_value: c.monthly_price || 0,
+        payment_cycle: c.payment_cycle || 'Monatlich'
       })),
       ...filesRes.rows.map(f => ({
         id: f.id,
@@ -2955,46 +2957,120 @@ app.post('/api/portal/contracts/upgrade', authenticateToken, async (req: Authent
   const { serviceId, serviceName, price, type } = req.body;
   const { id: userId, tenant_id, firstName, lastName } = req.user!;
 
+  // Predefined small upgrades that get auto-activated
+  const AUTO_UPGRADES = ['seo', 'newsletter', 'security', 'cloud'];
+  const isAutoUpgrade = AUTO_UPGRADES.includes(serviceId);
+
   try {
     const companyId = await getCompanyId(userId);
-    
-    // Create a ticket for the upgrade request
-    const ticketResult = await pool.query(
-      `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, category)
-       VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'upgrade_request') RETURNING id`,
-      [
-        tenant_id, 
-        companyId, 
-        userId, 
-        `Upgrade-Anfrage: ${serviceName}`, 
-        `Der Kunde möchte den Service "${serviceName}" buchen.\nKosten: ${price}\nTyp: ${type === 'monthly' ? 'Monatlich' : 'Einmalig'}`
-      ]
-    );
 
-    // Notify admins via Notification & Email
-    await createNotification({
-      tenant_id,
-      target_role: 'admin',
-      type: 'ticket',
-      entity_id: ticketResult.rows[0].id,
-      title: 'Neue Upgrade-Buchung',
-      message: `Ein Kunde hat "${serviceName}" gebucht.`,
-      priority: 'high',
-      link: `/tickets/${ticketResult.rows[0].id}`
-    });
+    await pool.query('BEGIN');
 
-    // Send Email to Admin
-    try {
-      await resend.emails.send({
-        from: EMAIL_INFO,
-        to: ['info@hed-it.ch'], // Internal mail
-        subject: `NEUE BUCHUNG: ${serviceName} von ${firstName} ${lastName}`,
-        html: `<h3>Neue Buchung im Portal</h3><p>Kunde: ${firstName} ${lastName}</p><p>Service: ${serviceName}</p><p>Preis: ${price} (${type})</p><a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}">Ticket öffnen</a>`
+    if (isAutoUpgrade) {
+      // --- AUTO-ACTIVATE: Small monthly upgrades ---
+      // 1. Create contract immediately
+      const priceMatch = String(price).match(/(\d+(\.\d+)?)/);
+      const monthlyPrice = priceMatch ? parseFloat(priceMatch[1]) : 0;
+
+      await pool.query(
+        `INSERT INTO contracts (tenant_id, company_id, service_name, type, status, start_date, monthly_price, payment_cycle)
+         VALUES ($1, $2, $3, 'service', 'active', NOW(), $4, 'monthly')`,
+        [tenant_id, companyId, serviceName, monthlyPrice]
+      );
+
+      // 2. Create first invoice
+      const invNumber = 'RE-' + new Date().getFullYear() + '-' + Math.floor(Math.random() * 100000).toString().padStart(5, '0');
+      await pool.query(
+        `INSERT INTO invoices (tenant_id, company_id, invoice_number, status, amount, issue_date, due_date, title)
+         VALUES ($1, $2, $3, 'open', $4, NOW(), NOW() + interval '30 days', $5)`,
+        [tenant_id, companyId, invNumber, monthlyPrice, `${serviceName} – Erste Monatsrechnung`]
+      );
+
+      // 3. Create setup ticket for internal team
+      const ticketResult = await pool.query(
+        `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, category)
+         VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'setup') RETURNING id`,
+        [
+          tenant_id, companyId, userId,
+          `Setup: ${serviceName}`,
+          `Kunde ${firstName} ${lastName} hat "${serviceName}" gebucht.\nVertrag & Rechnung wurden automatisch erstellt.\nBitte Service aufschalten.`
+        ]
+      );
+
+      // 4. Notify admin
+      await createNotification({
+        tenant_id,
+        target_role: 'admin',
+        type: 'ticket',
+        entity_id: ticketResult.rows[0].id,
+        title: `Neue Buchung: ${serviceName}`,
+        message: `${firstName} ${lastName} hat "${serviceName}" gebucht. Vertrag & Rechnung erstellt – bitte Service aufschalten.`,
+        priority: 'high',
+        link: `/tickets/${ticketResult.rows[0].id}`
       });
-    } catch (err) { console.error('Failed to send upgrade mail:', err); }
 
-    res.json({ success: true, message: 'Anfrage erfolgreich erstellt.' });
+      // 5. Notify customer
+      await createNotification({
+        tenant_id,
+        user_id: userId,
+        type: 'contract',
+        entity_id: companyId,
+        title: 'Service aktiviert!',
+        message: `Ihr Service "${serviceName}" wurde aktiviert. Die erste Rechnung finden Sie unter Rechnungen.`,
+        priority: 'high',
+        link: `/portal/contracts`
+      });
+
+      // 6. Email to admin
+      try {
+        await resend.emails.send({
+          from: EMAIL_INFO,
+          to: ['info@hed-it.ch'],
+          subject: `NEUE BUCHUNG (Auto): ${serviceName} von ${firstName} ${lastName}`,
+          html: `<h3>Automatische Buchung im Portal</h3><p>Kunde: ${firstName} ${lastName}</p><p>Service: ${serviceName}</p><p>Preis: ${monthlyPrice} CHF / Monat</p><p><b>Vertrag & Rechnung wurden automatisch erstellt.</b></p><a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}">Setup-Ticket öffnen</a>`
+        });
+      } catch (err) { console.error('Failed to send upgrade mail:', err); }
+
+      await pool.query('COMMIT');
+      res.json({ success: true, message: 'Service wurde aktiviert! Vertrag und Rechnung wurden erstellt.' });
+
+    } else {
+      // --- MANUAL APPROVAL: Calculator / large project requests ---
+      const ticketResult = await pool.query(
+        `INSERT INTO tickets (tenant_id, company_id, customer_id, title, description, status, priority, category)
+         VALUES ($1, $2, $3, $4, $5, 'new', 'high', 'upgrade_request') RETURNING id`,
+        [
+          tenant_id, companyId, userId,
+          `Projekt-Anfrage: ${serviceName}`,
+          `Der Kunde möchte den Service "${serviceName}" buchen.\nKosten: ${price}\nTyp: ${type === 'monthly' ? 'Monatlich' : 'Einmalig'}`
+        ]
+      );
+
+      await createNotification({
+        tenant_id,
+        target_role: 'admin',
+        type: 'ticket',
+        entity_id: ticketResult.rows[0].id,
+        title: 'Neue Projekt-Anfrage',
+        message: `${firstName} ${lastName} hat eine Projekt-Anfrage für "${serviceName}" gestellt.`,
+        priority: 'high',
+        link: `/tickets/${ticketResult.rows[0].id}`
+      });
+
+      try {
+        await resend.emails.send({
+          from: EMAIL_INFO,
+          to: ['info@hed-it.ch'],
+          subject: `PROJEKT-ANFRAGE: ${serviceName} von ${firstName} ${lastName}`,
+          html: `<h3>Neue Projekt-Anfrage im Portal</h3><p>Kunde: ${firstName} ${lastName}</p><p>Service: ${serviceName}</p><p>Geschätzter Preis: ${price}</p><p><b>Benötigt Admin-Genehmigung.</b></p><a href="https://tool.hed-it.ch/tickets/${ticketResult.rows[0].id}">Ticket öffnen</a>`
+        });
+      } catch (err) { console.error('Failed to send upgrade mail:', err); }
+
+      await pool.query('COMMIT');
+      res.json({ success: true, message: 'Ihre Anfrage wurde gesendet. Wir melden uns in Kürze bei Ihnen.' });
+    }
   } catch (error) {
+    await pool.query('ROLLBACK');
     console.error('Upgrade error:', error);
     res.status(500).json({ success: false, error: 'Server error' });
   }
