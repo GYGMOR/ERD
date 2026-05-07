@@ -1,16 +1,17 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  Ticket, Clock, MessageSquare, Send, CheckCircle, User, 
+import {
+  Ticket, Clock, MessageSquare, Send, CheckCircle, User,
   Building2, Calendar, AlertCircle, ChevronLeft, ArrowLeft,
   Paperclip, MoreVertical, Shield, ExternalLink, RefreshCw,
-  UserCheck, UserX
+  UserCheck, UserX, X
 } from 'lucide-react';
 import { dataService } from '../services/dataService';
 import { getUser } from '../utils/auth';
 import { SignaturePad } from '../components/SignaturePad';
 
 const STATUSES: any = {
+  new: { label: 'Neu', color: '#6366f1' },
   open: { label: 'Offen', color: '#ffab00' },
   in_progress: { label: 'In Bearbeitung', color: '#0052cc' },
   resolved: { label: 'Gelöst', color: '#36b37e' },

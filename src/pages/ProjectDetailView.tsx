@@ -7,7 +7,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Project, Ticket as TicketEntity } from '../types/entities';
-import { isInternal } from '../utils/auth';
+import { isInternal, getToken } from '../utils/auth';
 import { DocumentExplorer } from '../components/DocumentExplorer';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: any }> = {
@@ -137,11 +137,12 @@ export const ProjectDetailView = () => {
     try {
       const projApi = isInternal() ? '/api/projects' : '/api/portal/projects';
       const ticketApi = isInternal() ? '/api/tickets' : '/api/portal/tickets';
-      
+      const authHeaders: HeadersInit = { 'Authorization': `Bearer ${getToken()}` };
+
       const [projRes, ticketRes, logsRes] = await Promise.all([
-        fetch(projApi),
-        fetch(ticketApi),
-        fetch(`/api/projects/${id}/logs`)
+        fetch(projApi, { headers: authHeaders }),
+        fetch(ticketApi, { headers: authHeaders }),
+        fetch(`/api/projects/${id}/logs`, { headers: authHeaders })
       ]);
       
       const projData = await projRes.json();

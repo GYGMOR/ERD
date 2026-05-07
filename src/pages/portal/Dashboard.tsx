@@ -45,8 +45,8 @@ export const Dashboard = () => {
     const fetchMetrics = async () => {
       try {
         const res = await dataService.getPortalDashboard();
-        if (res.success && res.metrics) {
-          setMetrics(res.metrics);
+        if (res.success && res.data) {
+          setMetrics(res.data);
         }
       } catch (err) {
         console.error('Failed to fetch portal metrics', err);

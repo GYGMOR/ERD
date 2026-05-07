@@ -367,6 +367,19 @@ export const dataService = {
     }
   },
 
+  async signProposal(payload: { documentId: string; totalAmount: number; projectName: string }) {
+    try {
+      const data = await fetch(`${API_BASE}/portal/sign-proposal`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify(payload),
+      }).then(handleResponse);
+      return data;
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  },
+
   // --- CALENDAR ---
   async getCalendarEvents(params?: { userIds?: string[], start?: string, end?: string }) {
     try {

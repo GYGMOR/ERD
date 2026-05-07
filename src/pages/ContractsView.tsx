@@ -13,6 +13,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   expired: { label: 'Abgelaufen', color: '#ff5630' },
   cancelled: { label: 'Gekündigt', color: '#ffab00' },
   archived: { label: 'Archiviert', color: '#0052cc' },
+  pending_signature: { label: 'Ausstehend', color: '#d97706' },
 };
 
 export const ContractsView = () => {
@@ -69,7 +70,12 @@ export const ContractsView = () => {
     if (!newCon.title) return;
 
     try {
-      const totalAmount = items.reduce((sum: number, item: LineItem) => sum + (item.total_price * (1 + item.tax_rate / 100)), 0);
+      const discountPercent = newCon.discount_percent || 0;
+      const subtotal = items.reduce((sum: number, item: LineItem) => sum + item.total_price, 0);
+      const discountAmt = subtotal * (discountPercent / 100);
+      const tax = items.reduce((sum: number, item: LineItem) => sum + (item.total_price * (item.tax_rate / 100)), 0);
+      const taxDiscounted = tax * (1 - discountPercent / 100);
+      const totalAmount = subtotal - discountAmt + taxDiscounted;
 
       const res = await fetch('/api/contracts', {
         method: 'POST',
@@ -81,7 +87,7 @@ export const ContractsView = () => {
           amount: totalAmount,
           items: items,
           client_type: newCon.client_type || 'business',
-          discount_percent: newCon.discount_percent || 0
+          discount_percent: discountPercent,
         }),
       });
       const data = await res.json();
@@ -169,8 +175,8 @@ export const ContractsView = () => {
                     </span>
                   </td>
                   <td>
-                    <span className="badge" style={{ backgroundColor: `${STATUS_CONFIG[c.status].color}20`, color: STATUS_CONFIG[c.status].color }}>
-                      {STATUS_CONFIG[c.status].label}
+                    <span className="badge" style={{ backgroundColor: `${(STATUS_CONFIG[c.status] || STATUS_CONFIG.draft).color}20`, color: (STATUS_CONFIG[c.status] || STATUS_CONFIG.draft).color }}>
+                      {(STATUS_CONFIG[c.status] || STATUS_CONFIG.draft).label}
                     </span>
                   </td>
                   <td>
@@ -184,7 +190,7 @@ export const ContractsView = () => {
                   <td>
                     <div style={{ fontWeight: 600 }}>{c.amount ? `${parseFloat(c.amount as string).toFixed(2)} CHF` : '-'}</div>
                     <div style={{ fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <Clock size={10} /> {c.billing_interval === 'monthly' ? 'Monatlich' : c.billing_interval === 'yearly' ? 'Jährlich' : c.billing_interval}
+                      <Clock size={10} /> {c.billing_interval === 'monthly' ? 'Monatlich' : c.billing_interval === 'yearly' ? 'Jährlich' : c.billing_interval === 'quarterly' ? 'Quartalsweise' : c.billing_interval === 'one_time' ? 'Einmalig' : c.billing_interval}
                     </div>
                   </td>
                   <td style={{ textAlign: 'center' }}>
@@ -269,7 +275,7 @@ export const ContractsView = () => {
               </div>
               <div style={{ marginBottom: 16 }}>
                 <label style={{ display: 'block', marginBottom: 12, fontWeight: 700, fontSize: 13, textTransform: 'uppercase', color: 'var(--color-text-muted)' }}>Leistungen / Positionen</label>
-                <LineItemEditor items={items} onChange={setItems} />
+                <LineItemEditor items={items} onChange={setItems} discountPercent={newCon.discount_percent || 0} />
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>

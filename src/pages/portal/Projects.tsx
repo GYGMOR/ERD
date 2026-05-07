@@ -83,10 +83,10 @@ export const Projects = () => {
               <div style={{ paddingTop: 16, borderTop: '1px solid var(--color-border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.05em' }}>Fortschritt</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-primary)' }}>65%</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-primary)' }}>{p.completion_percentage ?? 0}%</span>
                 </div>
                 <div style={{ height: 6, width: '100%', backgroundColor: 'var(--color-surface-hover)', borderRadius: 'var(--radius-pill)', overflow: 'hidden' }}>
-                   <div style={{ height: '100%', backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-pill)', width: '65%' }}></div>
+                   <div style={{ height: '100%', backgroundColor: 'var(--color-primary)', borderRadius: 'var(--radius-pill)', width: `${p.completion_percentage ?? 0}%` }}></div>
                 </div>
                 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 }}>

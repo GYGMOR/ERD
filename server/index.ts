@@ -1343,20 +1343,55 @@ app.patch('/api/tickets/:id', authenticateToken, async (req: AuthenticatedReques
     const result = await pool.query(query, values);
     if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Ticket not found or unauthorized' });
     
-    // Notification for assignment change
-    if (assignee_id && typeof assignee_id === 'string') {
+    // Notification + email for assignment change
+    const newAssigneeId = req.body.assignee_id;
+    if (newAssigneeId && typeof newAssigneeId === 'string') {
       const ticket = result.rows[0];
-      const ticketId = id as string;
       await createNotification({
         tenant_id: ticket.tenant_id,
-        user_id: assignee_id,
+        user_id: newAssigneeId,
         type: 'ticket',
-        entity_id: ticketId,
+        entity_id: id,
         title: 'Ticket zugewiesen',
-        message: `Das Ticket #${ticketId.substring(0,6).toUpperCase()} "${ticket.title}" wurde Ihnen zugewiesen.`,
+        message: `Das Ticket #${id.substring(0,6).toUpperCase()} "${ticket.title}" wurde Ihnen zugewiesen.`,
         priority: ticket.priority === 'critical' ? 'critical' : 'high',
-        link: `/tickets/${ticketId}`
+        link: `/tickets/${id}`
       });
+
+      try {
+        const assigneeRes = await pool.query('SELECT email, first_name FROM users WHERE id = $1', [newAssigneeId]);
+        if (assigneeRes.rows.length > 0 && assigneeRes.rows[0].email) {
+          const { email: assigneeEmail, first_name } = assigneeRes.rows[0];
+          const priorityLabel: Record<string, string> = { low: 'Niedrig', medium: 'Mittel', high: 'Hoch', critical: 'Kritisch' };
+          await resend.emails.send({
+            from: 'HED-IT <info@hed-it.ch>',
+            to: assigneeEmail,
+            subject: `Ticket zugewiesen: ${ticket.title}`,
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0">
+                <div style="background:#1e3a5f;padding:28px 32px">
+                  <h2 style="color:#fff;margin:0;font-size:20px">HED-IT Ticketsystem</h2>
+                  <p style="color:#93c5fd;margin:4px 0 0;font-size:13px">Ticket-Zuweisung</p>
+                </div>
+                <div style="padding:32px">
+                  <p style="margin:0 0 16px">Hallo ${first_name || 'Team'},</p>
+                  <p style="margin:0 0 24px;color:#334155">Das folgende Ticket wurde Ihnen zugewiesen:</p>
+                  <div style="background:#f8fafc;border-left:4px solid #1e3a5f;border-radius:4px;padding:20px;margin-bottom:24px">
+                    <p style="margin:0 0 8px;font-weight:700;font-size:16px">${ticket.title}</p>
+                    <p style="margin:0;color:#64748b;font-size:13px">Priorität: <strong>${priorityLabel[ticket.priority] || ticket.priority}</strong></p>
+                    ${ticket.description ? `<p style="margin:12px 0 0;font-size:13px;color:#64748b">${ticket.description}</p>` : ''}
+                  </div>
+                  <a href="https://hed-it.ch/tickets/${id}" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:700;font-size:14px">Ticket öffnen →</a>
+                </div>
+                <div style="background:#f1f5f9;padding:16px 32px;text-align:center;font-size:11px;color:#94a3b8">
+                  HED-IT GmbH · Automatische Benachrichtigung · Bitte nicht antworten
+                </div>
+              </div>`
+          });
+        }
+      } catch (emailErr) {
+        console.error('Failed to send assignee email:', emailErr);
+      }
     }
 
     res.status(200).json({ success: true, data: result.rows[0] });
@@ -1726,6 +1761,58 @@ app.post('/api/invoices', async (req: express.Request, res: express.Response) =>
       link: `/quotes?openQuote=${result.rows[0].id}`
     });
 
+    // Send email to customer when invoice is "sent" (not draft)
+    if (status === 'sent' && company_id) {
+      try {
+        const contactRes = await pool.query(
+          `SELECT email, first_name FROM contacts WHERE company_id = $1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`,
+          [company_id]
+        );
+        if (contactRes.rows.length > 0 && contactRes.rows[0].email) {
+          const { email: custEmail, first_name } = contactRes.rows[0];
+          const invoice = result.rows[0];
+          const amountFmt = parseFloat(amount || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 });
+          const dueFmt = due_date ? new Date(due_date).toLocaleDateString('de-CH') : 'N/A';
+          await resend.emails.send({
+            from: 'HED-IT <info@hed-it.ch>',
+            to: custEmail,
+            subject: `Ihre Rechnung: ${title}`,
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0">
+                <div style="background:#1e3a5f;padding:28px 32px">
+                  <h2 style="color:#fff;margin:0;font-size:20px">HED-IT GmbH</h2>
+                  <p style="color:#93c5fd;margin:4px 0 0;font-size:13px">Ihre neue Rechnung</p>
+                </div>
+                <div style="padding:32px">
+                  <p style="margin:0 0 16px">Hallo ${first_name || 'Kunde'},</p>
+                  <p style="margin:0 0 24px;color:#334155">Eine neue Rechnung wurde für Sie erstellt. Sie können diese jederzeit im Kundenportal einsehen.</p>
+                  <div style="background:#f8fafc;border-radius:8px;padding:20px;margin-bottom:24px;border:1px solid #e2e8f0">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+                      <span style="color:#64748b;font-size:13px">Beschreibung:</span>
+                      <span style="font-weight:700;font-size:13px">${title}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;margin-bottom:12px">
+                      <span style="color:#64748b;font-size:13px">Betrag:</span>
+                      <span style="font-weight:800;font-size:16px;color:#1e3a5f">CHF ${amountFmt}</span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between">
+                      <span style="color:#64748b;font-size:13px">Fälligkeitsdatum:</span>
+                      <span style="font-weight:700;font-size:13px;color:#dc2626">${dueFmt}</span>
+                    </div>
+                  </div>
+                  <a href="https://portal.hed-it.ch/portal/invoices" style="display:inline-block;background:#1e3a5f;color:#fff;padding:14px 32px;border-radius:6px;text-decoration:none;font-weight:700;font-size:14px">Rechnung im Portal ansehen →</a>
+                </div>
+                <div style="background:#f1f5f9;padding:16px 32px;text-align:center;font-size:11px;color:#94a3b8">
+                  HED-IT GmbH · Bei Fragen: info@hed-it.ch · Bitte nicht auf diese E-Mail antworten
+                </div>
+              </div>`
+          });
+        }
+      } catch (emailErr) {
+        console.error('Failed to send invoice email:', emailErr);
+      }
+    }
+
     res.status(201).json({ success: true, data: result.rows[0] });
   } catch (error) {
     console.error('Error creating invoice:', error);
@@ -1945,31 +2032,89 @@ app.post('/api/contracts', async (req: express.Request, res: express.Response) =
 
     // Send Email to Customer if company_id is provided
     if (company_id) {
-      const contactRes = await pool.query('SELECT email, first_name FROM contacts WHERE company_id = $1 AND is_primary = true LIMIT 1', [company_id]);
+      // Fallback: any contact with email if no primary found
+      const contactRes = await pool.query(
+        'SELECT email, first_name FROM contacts WHERE company_id = $1 AND email IS NOT NULL AND email != \'\' ORDER BY is_primary DESC LIMIT 1',
+        [company_id]
+      );
       const customerEmail = contactRes.rows[0]?.email;
       const customerName = contactRes.rows[0]?.first_name || 'Sehr geehrte Damen und Herren';
+
+      const billingLabel = billing_interval === 'monthly' ? 'Monatlich' :
+                           billing_interval === 'yearly' ? 'Jährlich' :
+                           billing_interval === 'quarterly' ? 'Quartalsweise' :
+                           billing_interval === 'one_time' ? 'Einmalig' : billing_interval;
 
       if (customerEmail) {
         await resend.emails.send({
           from: EMAIL_INFO,
           to: customerEmail,
-          subject: `Neuer Vertrag: ${title}`,
-          html: `
-            <div style="font-family: sans-serif; line-height: 1.5; color: #333;">
-              <h2>Guten Tag ${customerName},</h2>
-              <p>Wir haben einen neuen Vertrag für Sie im Portal bereitgestellt:</p>
-              <div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0;">
-                <strong>Vertrag:</strong> ${title}<br>
-                <strong>Betrag:</strong> CHF ${parseFloat(amount).toFixed(2)} (${billing_interval})
-              </div>
-              <p>Bitte loggen Sie sich in Ihr Kundenportal ein, um den Vertrag online zu prüfen und zu signieren.</p>
-              <a href="https://portal.hed-it.ch/portal/contracts" style="display: inline-block; background: #2563eb; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Zum Portal</a>
-              <p style="margin-top: 30px; font-size: 12px; color: #666;">
-                HED-IT Web & Marketing<br>
-                www.hed-it.ch
-              </p>
-            </div>
-          `
+          subject: `Ihr Vertrag wartet auf Ihre Unterschrift – ${title}`,
+          html: `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:0">
+  <!-- Header -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e293b">
+    <tr><td style="padding:28px 40px">
+      <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:-0.5px">HED-IT</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:3px;letter-spacing:0.5px;text-transform:uppercase">Web & Marketing Solutions</div>
+    </td></tr>
+  </table>
+  <!-- Hero -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#2563eb">
+    <tr><td style="padding:24px 40px">
+      <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.75);text-transform:uppercase;letter-spacing:1px">Vertrag zur Unterschrift bereit</div>
+    </td></tr>
+  </table>
+  <!-- Body -->
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:20px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+      <tr><td style="padding:40px">
+        <p style="margin:0 0 24px;font-size:16px;color:#1e293b">Guten Tag <strong>${customerName}</strong>,</p>
+        <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.7">wir haben einen neuen Dienstleistungsvertrag für Sie vorbereitet. Bitte prüfen Sie die Details und signieren Sie den Vertrag digital in Ihrem Kundenportal.</p>
+
+        <!-- Contract Box -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:28px">
+          <tr><td style="padding:20px 24px;border-bottom:1px solid #e2e8f0">
+            <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">Vertragsbezeichnung</div>
+            <div style="font-size:18px;font-weight:800;color:#1e293b">${title}</div>
+          </td></tr>
+          <tr><td style="padding:16px 24px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding:6px 0;width:50%">
+                  <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Betrag</div>
+                  <div style="font-size:20px;font-weight:800;color:#2563eb">CHF ${parseFloat(amount).toLocaleString('de-CH', { minimumFractionDigits: 2 })}</div>
+                </td>
+                <td style="padding:6px 0">
+                  <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Abrechnungsintervall</div>
+                  <div style="font-size:15px;font-weight:700;color:#1e293b">${billingLabel}</div>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+
+        <!-- CTA -->
+        <table cellpadding="0" cellspacing="0"><tr><td style="border-radius:6px;background:#2563eb">
+          <a href="https://portal.hed-it.ch/portal/contracts" style="display:inline-block;padding:14px 32px;font-size:14px;font-weight:700;color:#fff;text-decoration:none;letter-spacing:0.2px">Jetzt Vertrag prüfen &amp; signieren →</a>
+        </td></tr></table>
+
+        <p style="margin:28px 0 0;font-size:12px;color:#94a3b8;line-height:1.6">Falls Sie Fragen haben, stehen wir Ihnen jederzeit zur Verfügung.<br>Kontaktieren Sie uns unter <a href="mailto:info@hed-it.ch" style="color:#2563eb;text-decoration:none">info@hed-it.ch</a></p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+  <!-- Footer -->
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:24px 40px;text-align:center">
+    <div style="font-size:12px;color:#94a3b8;line-height:1.8">
+      <strong style="color:#64748b">HED-IT Joel Hediger</strong> | Web &amp; Marketing Solutions<br>
+      <a href="mailto:info@hed-it.ch" style="color:#2563eb;text-decoration:none">info@hed-it.ch</a> &nbsp;·&nbsp; <a href="https://www.hed-it.ch" style="color:#2563eb;text-decoration:none">www.hed-it.ch</a><br>
+      <span style="font-size:11px;color:#cbd5e1">© ${new Date().getFullYear()} HED-IT. Alle Rechte vorbehalten.</span>
+    </div>
+  </td></tr></table>
+</td></tr></table>
+</body></html>`
         }).catch(err => console.error('Error sending contract email:', err));
       }
     }
@@ -2003,22 +2148,6 @@ app.get('/api/products', authenticateToken, async (req: AuthenticatedRequest, re
   } catch (error) {
     console.error('Error fetching products:', error);
     res.status(500).json({ success: false, error: 'Internal Server Error' });
-  }
-});
-
-app.post('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id } = req.body;
-  const { tenant_id } = req.user!;
-  try {
-    const result = await pool.query(
-      `INSERT INTO products (tenant_id, name, sku, category, description, price, tax_rate, unit, is_recurring, is_active, is_folder, parent_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [tenant_id, name, sku, category, description, price || 0, tax_rate || 8.1, unit || 'Stück', is_recurring || false, is_active ?? true, is_folder || false, parent_id || null]
-    );
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Error creating product:', error);
-    res.status(500).json({ success: false, error: 'Server error creating product' });
   }
 });
 
@@ -2321,45 +2450,39 @@ app.get('/api/reports/performance', authenticateToken, authorizeRole('admin', 'm
   }
 });
 
-// ─── Finance / Dashboard Metrics ──────────────────────────────────────────────
-app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+
+
+
+// ─── Timeline (aggregated activity feed) ──────────────────────────────────────
+app.get('/api/timeline', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
-    const revenueByMonth = await pool.query(`
-      SELECT TO_CHAR(issue_date, 'Mon') as month, SUM(amount) as revenue
-      FROM invoices 
-      WHERE tenant_id = $1 AND issue_date >= DATE_TRUNC('year', CURRENT_DATE)
-      GROUP BY TO_CHAR(issue_date, 'Mon'), DATE_PART('month', issue_date)
-      ORDER BY DATE_PART('month', issue_date)
-    `, [tenant_id]);
+    const limit = parseInt(req.query.limit as string) || 50;
 
-    const statusDistribution = await pool.query(`
-      SELECT status, SUM(amount) as total FROM invoices WHERE tenant_id = $1 GROUP BY status
-    `, [tenant_id]);
+    const result = await pool.query(`
+      SELECT * FROM (
+        SELECT id, company_id, 'ticket_created' as event_type, title, description, id as related_id, created_at
+        FROM tickets WHERE tenant_id = $1
+        UNION ALL
+        SELECT id, company_id, 'contract_signed' as event_type, title, NULL as description, id as related_id, updated_at as created_at
+        FROM contracts WHERE tenant_id = $1 AND status IN ('active', 'pending_signature')
+        UNION ALL
+        SELECT id, company_id, 'invoice_sent' as event_type,
+          'Rechnung ' || invoice_number as title, NULL as description, id as related_id, issue_date::timestamptz as created_at
+        FROM invoices WHERE tenant_id = $1
+      ) events
+      ORDER BY created_at DESC
+      LIMIT $2
+    `, [tenant_id, limit]);
 
-    res.json({ success: true, data: { revenueByMonth: revenueByMonth.rows, statusDistribution: statusDistribution.rows } });
+    res.json({ success: true, data: result.rows });
   } catch (error) {
-    console.error('Finance Metrics Error:', error);
-    res.status(500).json({ success: false, error: 'Server Error' });
+    console.error('Timeline error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
   }
 });
-
-
 
 // ─── Settings Routes ─────────────────────────────────────────────────────────
-app.get('/api/settings', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const { tenant_id } = req.user!;
-    const result = await pool.query('SELECT category, key, value, is_secret FROM system_settings WHERE tenant_id = $1 OR tenant_id IS NULL', [tenant_id]);
-    const data = result.rows.map(row => row.is_secret ? { ...row, value: '********' } : row);
-    res.json({ success: true, data });
-  } catch (error) {
-    console.error('Error fetching settings:', error);
-    res.status(500).json({ success: false, error: 'Failed' });
-  }
-});
-
-
 
 // Helper to get system settings
 const getSystemSettings = async (tenantId: string | null, category: string) => {
@@ -2418,49 +2541,6 @@ app.patch('/api/settings', authenticateToken, authorizeRole('admin'), async (req
   } catch (error) {
     console.error('Error updating event:', error);
     res.status(500).json({ success: false, error: 'Failed to update calendar event' });
-  }
-});
-
-// RSVP endpoint
-app.patch('/api/calendar/events/:id/rsvp', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
-  const { id } = req.params;
-  const { status } = req.body; // 'confirmed', 'declined'
-  const { id: userId, tenant_id } = req.user!;
-
-  if (!['confirmed', 'declined'].includes(status)) {
-    return res.status(400).json({ success: false, error: 'Invalid status' });
-  }
-
-  try {
-    const result = await pool.query(
-      'UPDATE calendar_event_participants SET status = $1 WHERE event_id = $2 AND user_id = $3 RETURNING *',
-      [status, id, userId]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Invitation not found' });
-    }
-
-    // Optional: Notify creator
-    const eventResult = await pool.query('SELECT title, created_by FROM calendar_events WHERE id = $1', [id]);
-    if (eventResult.rows.length > 0) {
-      const event = eventResult.rows[0];
-      await createNotification({
-        tenant_id,
-        user_id: event.created_by,
-        type: 'calendar',
-        entity_id: id,
-        title: 'Termin-Antwort',
-        message: `Benutzer hat die Einladung zu "${event.title}" ${status === 'confirmed' ? 'angenommen' : 'abgelehnt'}.`,
-        priority: 'low',
-        link: `/calendar?eventId=${id}`
-      });
-    }
-
-    res.json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Error updating RSVP:', error);
-    res.status(500).json({ success: false, error: 'Failed to update RSVP' });
   }
 });
 
@@ -2743,14 +2823,15 @@ const getCompanyId = async (userId: string) => {
 
 app.get('/api/portal/dashboard', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    const { id: userId, company_id } = req.user!;
-    
+    const { id: userId } = req.user!;
+    const company_id = req.user!.company_id || await getCompanyId(userId);
+
     const [tickets, projects, offers, invoices, contracts] = await Promise.all([
       pool.query("SELECT COUNT(*) FROM tickets WHERE customer_id = $1 AND status NOT IN ('resolved', 'closed')", [userId as string]),
-      pool.query("SELECT COUNT(*) FROM projects WHERE company_id = $1 AND status = 'in_progress'", [company_id as string]),
-      pool.query("SELECT COUNT(*) FROM offers WHERE company_id = $1 AND status = 'sent'", [company_id as string]),
-      pool.query("SELECT COUNT(*) FROM invoices WHERE company_id = $1 AND status IN ('open', 'overdue')", [company_id as string]),
-      pool.query("SELECT COUNT(*) FROM contracts WHERE company_id = $1 AND status = 'active'", [company_id as string])
+      company_id ? pool.query("SELECT COUNT(*) FROM projects WHERE company_id = $1 AND status = 'in_progress'", [company_id]) : Promise.resolve({ rows: [{ count: '0' }] }),
+      company_id ? pool.query("SELECT COUNT(*) FROM offers WHERE company_id = $1 AND status = 'sent'", [company_id]) : Promise.resolve({ rows: [{ count: '0' }] }),
+      company_id ? pool.query("SELECT COUNT(*) FROM invoices WHERE company_id = $1 AND status IN ('open', 'overdue')", [company_id]) : Promise.resolve({ rows: [{ count: '0' }] }),
+      company_id ? pool.query("SELECT COUNT(*) FROM contracts WHERE company_id = $1 AND status = 'active'", [company_id]) : Promise.resolve({ rows: [{ count: '0' }] }),
     ]);
 
     res.json({
@@ -2947,6 +3028,27 @@ app.get('/api/portal/offers', authenticateToken, async (req: AuthenticatedReques
   }
 });
 
+app.get('/api/portal/projects', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id: userId } = req.user!;
+    const companyId = await getCompanyId(userId);
+    if (!companyId) return res.json({ success: true, data: [] });
+
+    const result = await pool.query(
+      `SELECT p.*,
+        COALESCE(p.completion_percentage, 0) as completion_percentage
+       FROM projects p
+       WHERE p.company_id = $1
+       ORDER BY p.created_at DESC`,
+      [companyId]
+    );
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Portal projects error:', error);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { id: userId } = req.user!;
@@ -2995,10 +3097,9 @@ app.post('/api/portal/contracts/:id/sign', authenticateToken, async (req: Authen
   const { signatureData } = req.body;
 
   try {
-    // 1. Update Contract
     const contractRes = await pool.query(
-      `UPDATE contracts 
-       SET status = 'active', signature_data = $1, signature_date = NOW() 
+      `UPDATE contracts
+       SET status = 'active', signature_data = $1, signature_date = NOW()
        WHERE id = $2 RETURNING *`,
       [signatureData, id]
     );
@@ -3009,32 +3110,46 @@ app.post('/api/portal/contracts/:id/sign', authenticateToken, async (req: Authen
 
     const contract = contractRes.rows[0];
 
-    // 2. Create Initial Invoice
+    // Generate unique invoice number
+    const invNumber = `RE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+
+    // Calculate due date based on billing_interval
+    const issueDate = new Date();
     let dueDate = new Date();
+
     if (contract.billing_interval === 'monthly') {
-      dueDate.setDate(20); 
+      // Next 20th of month + 10 days payment term = 30th
+      const now = new Date();
+      const targetDay20 = new Date(now.getFullYear(), now.getMonth(), 20);
+      if (now.getDate() >= 20) targetDay20.setMonth(targetDay20.getMonth() + 1);
+      dueDate = new Date(targetDay20);
+      dueDate.setDate(dueDate.getDate() + 10); // +10 days = 30th
+    } else if (contract.billing_interval === 'yearly') {
+      dueDate.setDate(dueDate.getDate() + 30);
+    } else if (contract.billing_interval === 'quarterly') {
+      dueDate.setDate(dueDate.getDate() + 30);
     } else {
+      // one_time or anything else
       dueDate.setDate(dueDate.getDate() + 30);
     }
 
-    const actualDueDate = new Date(dueDate);
-    actualDueDate.setDate(actualDueDate.getDate() + 10); // + 10 days "zahlbar"
-
-    await pool.query(
-      `INSERT INTO invoices (tenant_id, company_id, title, amount, status, due_date, contract_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    const invoiceRes = await pool.query(
+      `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, amount, status, issue_date, due_date, contract_id, tax_rate)
+       VALUES ($1, $2, $3, $4, $5, 'open', $6, $7, $8, 8.1) RETURNING *`,
       [
-        contract.tenant_id, 
-        contract.company_id, 
-        `Rechnung zu Vertrag: ${contract.title}`, 
-        contract.amount, 
-        'open', 
-        actualDueDate,
+        contract.tenant_id,
+        contract.company_id,
+        invNumber,
+        `Rechnung zu Vertrag: ${contract.title}`,
+        contract.amount,
+        issueDate,
+        dueDate,
         contract.id
       ]
     );
+    const invoice = invoiceRes.rows[0];
 
-    // 3. Notify Admin
+    // Notify admin in-app
     await createNotification({
       tenant_id: contract.tenant_id,
       target_role: 'admin',
@@ -3045,7 +3160,147 @@ app.post('/api/portal/contracts/:id/sign', authenticateToken, async (req: Authen
       link: `/contracts?openContract=${contract.id}`
     });
 
-    res.json({ success: true, message: 'Vertrag erfolgreich signiert!' });
+    // Fetch customer contact
+    const contactRes = await pool.query(
+      `SELECT email, first_name FROM contacts WHERE company_id = $1 AND email IS NOT NULL AND email != '' ORDER BY is_primary DESC LIMIT 1`,
+      [contract.company_id]
+    );
+    const customerEmail = contactRes.rows[0]?.email;
+    const customerName = contactRes.rows[0]?.first_name || 'Sehr geehrte Damen und Herren';
+
+    const billingLabel = contract.billing_interval === 'monthly' ? 'Monatlich' :
+                         contract.billing_interval === 'yearly' ? 'Jährlich' :
+                         contract.billing_interval === 'quarterly' ? 'Quartalsweise' : 'Einmalig';
+
+    const billingInfo = contract.billing_interval === 'monthly'
+      ? 'Diese Rechnung erscheint monatlich am 20. des Monats und ist jeweils 10 Tage später fällig.'
+      : contract.billing_interval === 'yearly'
+      ? 'Diese Leistung wird jährlich in Rechnung gestellt.'
+      : contract.billing_interval === 'quarterly'
+      ? 'Diese Leistung wird quartalsweise in Rechnung gestellt.'
+      : 'Diese Rechnung ist eine Einmalzahlung.';
+
+    // Send confirmation email to customer
+    if (customerEmail) {
+      await resend.emails.send({
+        from: EMAIL_INFO,
+        to: customerEmail,
+        subject: `Vertrag signiert – Rechnung ${invNumber}`,
+        html: `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,Helvetica,sans-serif">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td>
+  <!-- Header -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e293b">
+    <tr><td style="padding:28px 40px">
+      <div style="font-size:24px;font-weight:900;color:#fff;letter-spacing:-0.5px">HED-IT</div>
+      <div style="font-size:11px;color:rgba(255,255,255,0.55);margin-top:3px;letter-spacing:0.5px;text-transform:uppercase">Web & Marketing Solutions</div>
+    </td></tr>
+  </table>
+  <!-- Hero -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#16a34a">
+    <tr><td style="padding:24px 40px">
+      <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.85);text-transform:uppercase;letter-spacing:1px">✓ Vertrag erfolgreich signiert</div>
+    </td></tr>
+  </table>
+  <!-- Body -->
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:20px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08)">
+      <tr><td style="padding:40px">
+        <p style="margin:0 0 24px;font-size:16px;color:#1e293b">Guten Tag <strong>${customerName}</strong>,</p>
+        <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.7">vielen Dank! Ihr Vertrag wurde erfolgreich digital signiert. Nachfolgend finden Sie Ihre erste Rechnung.</p>
+
+        <!-- Contract Box -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:20px">
+          <tr><td style="padding:16px 20px">
+            <div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">Signierter Vertrag</div>
+            <div style="font-size:16px;font-weight:800;color:#1e293b">${contract.title}</div>
+            <div style="font-size:12px;color:#475569;margin-top:4px">Signiert am ${new Date().toLocaleDateString('de-CH')} um ${new Date().toLocaleTimeString('de-CH', { hour: '2-digit', minute: '2-digit' })} Uhr</div>
+          </td></tr>
+        </table>
+
+        <!-- Invoice Box -->
+        <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:28px">
+          <tr><td style="padding:16px 20px;border-bottom:1px solid #e2e8f0">
+            <div style="font-size:11px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">Rechnung erstellt</div>
+            <div style="font-size:15px;font-weight:700;color:#1e293b">${invNumber}</div>
+          </td></tr>
+          <tr><td style="padding:16px 20px">
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="padding:4px 0;width:33%">
+                  <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Betrag</div>
+                  <div style="font-size:20px;font-weight:800;color:#2563eb">CHF ${parseFloat(contract.amount).toLocaleString('de-CH', { minimumFractionDigits: 2 })}</div>
+                </td>
+                <td style="padding:4px 0;width:33%">
+                  <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Fällig am</div>
+                  <div style="font-size:15px;font-weight:700;color:#1e293b">${dueDate.toLocaleDateString('de-CH')}</div>
+                </td>
+                <td style="padding:4px 0">
+                  <div style="font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.5px">Intervall</div>
+                  <div style="font-size:15px;font-weight:700;color:#1e293b">${billingLabel}</div>
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+          <tr><td style="padding:12px 20px;background:#fffbeb;border-top:1px solid #fde68a;border-radius:0 0 8px 8px">
+            <div style="font-size:12px;color:#92400e">ℹ️ ${billingInfo}</div>
+          </td></tr>
+        </table>
+
+        <!-- CTA -->
+        <table cellpadding="0" cellspacing="0"><tr><td style="border-radius:6px;background:#2563eb">
+          <a href="https://portal.hed-it.ch/portal/invoices" style="display:inline-block;padding:14px 32px;font-size:14px;font-weight:700;color:#fff;text-decoration:none">Rechnung im Portal ansehen →</a>
+        </td></tr></table>
+
+        <p style="margin:28px 0 0;font-size:12px;color:#94a3b8;line-height:1.6">Bei Fragen stehen wir Ihnen jederzeit zur Verfügung.<br><a href="mailto:info@hed-it.ch" style="color:#2563eb;text-decoration:none">info@hed-it.ch</a></p>
+      </td></tr>
+    </table>
+  </td></tr></table>
+  <!-- Footer -->
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:24px 40px;text-align:center">
+    <div style="font-size:12px;color:#94a3b8;line-height:1.8">
+      <strong style="color:#64748b">HED-IT Joel Hediger</strong> | Web &amp; Marketing Solutions<br>
+      <a href="mailto:info@hed-it.ch" style="color:#2563eb;text-decoration:none">info@hed-it.ch</a> &nbsp;·&nbsp; <a href="https://www.hed-it.ch" style="color:#2563eb;text-decoration:none">www.hed-it.ch</a><br>
+      <span style="font-size:11px;color:#cbd5e1">© ${new Date().getFullYear()} HED-IT. Alle Rechte vorbehalten.</span>
+    </div>
+  </td></tr></table>
+</td></tr></table>
+</body></html>`
+      }).catch(err => console.error('Error sending signing confirmation email:', err));
+    }
+
+    // Notify admin by email
+    await resend.emails.send({
+      from: EMAIL_INFO,
+      to: EMAIL_ADMIN_INTERNAL,
+      subject: `Vertrag signiert: ${contract.title}`,
+      html: `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
+<body style="font-family:Arial,sans-serif;background:#f1f5f9;margin:0;padding:0">
+<table width="100%" cellpadding="0" cellspacing="0"><tr><td>
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#1e293b"><tr><td style="padding:20px 32px">
+    <div style="font-size:20px;font-weight:900;color:#fff">HED-IT</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">Intern – Vertragsbenachrichtigung</div>
+  </td></tr></table>
+  <table width="100%" cellpadding="0" cellspacing="0"><tr><td style="padding:16px">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#fff;border-radius:8px;padding:32px">
+      <tr><td>
+        <h2 style="margin:0 0 16px;font-size:18px;color:#16a34a">✓ Vertrag signiert</h2>
+        <p style="color:#475569;font-size:14px"><strong>${customerName}</strong> hat den Vertrag <strong>"${contract.title}"</strong> digital signiert.</p>
+        <table width="100%" cellpadding="8" cellspacing="0" style="border:1px solid #e2e8f0;border-radius:6px;margin:16px 0">
+          <tr style="background:#f8fafc"><td style="font-size:12px;color:#64748b;font-weight:700">Rechnungsnummer</td><td style="font-size:13px;font-weight:700;color:#1e293b">${invNumber}</td></tr>
+          <tr><td style="font-size:12px;color:#64748b;font-weight:700">Betrag</td><td style="font-size:13px;font-weight:700;color:#2563eb">CHF ${parseFloat(contract.amount).toLocaleString('de-CH', { minimumFractionDigits: 2 })}</td></tr>
+          <tr style="background:#f8fafc"><td style="font-size:12px;color:#64748b;font-weight:700">Fälligkeitsdatum</td><td style="font-size:13px;color:#1e293b">${dueDate.toLocaleDateString('de-CH')}</td></tr>
+          <tr><td style="font-size:12px;color:#64748b;font-weight:700">Signiert am</td><td style="font-size:13px;color:#1e293b">${new Date().toLocaleString('de-CH')}</td></tr>
+        </table>
+        <a href="https://portal.hed-it.ch/contracts?openContract=${contract.id}" style="display:inline-block;background:#1e293b;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:700">Vertrag anzeigen →</a>
+      </td></tr>
+    </table>
+  </td></tr></table>
+</td></tr></table>
+</body></html>`
+    }).catch(err => console.error('Error sending admin contract notification:', err));
+
+    res.json({ success: true, message: 'Vertrag erfolgreich signiert!', invoiceNumber: invNumber });
   } catch (error) {
     console.error('Error signing contract:', error);
     res.status(500).json({ success: false, error: 'Server error during signing' });
@@ -3055,31 +3310,219 @@ app.post('/api/portal/contracts/:id/sign', authenticateToken, async (req: Authen
 app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { id } = req.params;
   try {
-    const result = await pool.query('SELECT * FROM contracts WHERE id = $1', [id]);
+    const result = await pool.query(`
+      SELECT con.*, c.name as company_name, c.address as company_address, c.city as company_city, c.zip as company_zip, c.email as company_email
+      FROM contracts con
+      LEFT JOIN companies c ON con.company_id = c.id
+      WHERE con.id = $1
+    `, [id]);
     if (result.rows.length === 0) return res.status(404).send('Not found');
     const contract = result.rows[0];
 
-    const doc = new jsPDF();
-    doc.setFontSize(22);
-    doc.text('DIENSTLEISTUNGSVERTRAG', 20, 20);
-    doc.setFontSize(12);
-    doc.text(`Vertrag Nr: ${contract.contract_number || contract.id.substring(0, 8)}`, 20, 30);
-    doc.text(`Titel: ${contract.title}`, 20, 40);
-    doc.text(`Intervall: ${contract.billing_interval}`, 20, 50);
-    doc.text(`Betrag: CHF ${parseFloat(contract.amount).toFixed(2)}`, 20, 60);
-    doc.text(`Start: ${contract.start_date ? new Date(contract.start_date).toLocaleDateString() : '-'}`, 20, 70);
-    
-    if (contract.signature_date) {
-      doc.text(`Signiert am: ${new Date(contract.signature_date).toLocaleString()}`, 20, 90);
+    const doc = new jsPDF() as any;
+    const W = 210;
+    const H = 297;
+
+    // ─── Header ───────────────────────────────────────────────────────────────
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, 0, W, 48, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(24);
+    doc.text('HED-IT', 20, 22);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(148, 163, 184);
+    doc.text('Web & Marketing Solutions', 20, 30);
+    doc.text('info@hed-it.ch  ·  www.hed-it.ch', 20, 36);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(255, 255, 255);
+    doc.text('DIENSTLEISTUNGSVERTRAG', W - 20, 22, { align: 'right' });
+    const contractNum = contract.contract_number || contract.id.substring(0, 8).toUpperCase();
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(148, 163, 184);
+    doc.text(`Nr: ${contractNum}`, W - 20, 30, { align: 'right' });
+    doc.text(`Datum: ${new Date().toLocaleDateString('de-CH')}`, W - 20, 36, { align: 'right' });
+
+    // ─── Vertragsparteien ─────────────────────────────────────────────────────
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('AUFTRAGNEHMER', 20, 60);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text('HED-IT Joel Hediger', 20, 67);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text('Web & Marketing Solutions', 20, 73);
+    doc.text('Schweiz', 20, 79);
+    doc.text('info@hed-it.ch', 20, 85);
+
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.text('AUFTRAGGEBER', 115, 60);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.text(contract.company_name || 'Nicht angegeben', 115, 67);
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    if (contract.company_address) doc.text(contract.company_address, 115, 73);
+    if (contract.company_zip || contract.company_city) doc.text(`${contract.company_zip || ''} ${contract.company_city || ''}`.trim(), 115, 79);
+    if (contract.company_email) doc.text(contract.company_email, 115, 85);
+
+    // Divider
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(20, 93, W - 20, 93);
+
+    // ─── Vertragsdetails ──────────────────────────────────────────────────────
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('VERTRAGSDETAILS', 20, 101);
+
+    const billingLabel = contract.billing_interval === 'monthly' ? 'Monatlich' :
+                         contract.billing_interval === 'yearly' ? 'Jährlich' :
+                         contract.billing_interval === 'quarterly' ? 'Quartalsweise' :
+                         contract.billing_interval === 'one_time' ? 'Einmalig' : contract.billing_interval;
+    const clientTypeLabel = contract.client_type === 'business' ? 'B2B (Unternehmen)' :
+                            contract.client_type === 'association' ? 'Verein' : 'Einzelperson (Privat)';
+
+    const details = [
+      ['Vertragsbezeichnung', contract.title],
+      ['Vertragstyp', contract.contract_type || 'Dienstleistungsvertrag'],
+      ['Abrechnungsintervall', billingLabel],
+      ['Startdatum', contract.start_date ? new Date(contract.start_date).toLocaleDateString('de-CH') : '-'],
+      ['Enddatum', contract.end_date ? new Date(contract.end_date).toLocaleDateString('de-CH') : 'Unbefristet'],
+      ['Kundentyp', clientTypeLabel],
+      ...(contract.discount_percent > 0 ? [['Rabatt', `${contract.discount_percent}%`]] : []),
+    ];
+
+    doc.autoTable({
+      startY: 105,
+      body: details,
+      theme: 'plain',
+      columnStyles: { 0: { fontStyle: 'bold', cellWidth: 55, textColor: [100, 116, 139], fontSize: 9 }, 1: { fontSize: 10, textColor: [30, 41, 59] } },
+      styles: { cellPadding: { top: 3, bottom: 3, left: 0, right: 4 } },
+      margin: { left: 20, right: 20 },
+    });
+
+    // ─── Leistungsübersicht ───────────────────────────────────────────────────
+    const items = contract.items
+      ? (typeof contract.items === 'string' ? JSON.parse(contract.items) : contract.items)
+      : [];
+
+    const afterDetails = doc.lastAutoTable.finalY + 10;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.setTextColor(30, 41, 59);
+    doc.text('LEISTUNGSÜBERSICHT', 20, afterDetails);
+
+    const tableRows = items.length > 0
+      ? items.map((item: any) => [
+          item.title || '-',
+          item.description || '',
+          (item.quantity || 1).toString(),
+          `CHF ${parseFloat(item.unit_price || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}`,
+          `${parseFloat(item.tax_rate || 8.1).toFixed(1)}%`,
+          `CHF ${parseFloat(item.total_price || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}`,
+        ])
+      : [['Gemäss Vertrag', '', '1', `CHF ${parseFloat(contract.amount).toFixed(2)}`, '8.1%', `CHF ${parseFloat(contract.amount).toFixed(2)}`]];
+
+    const subtotal = items.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0), 0) || parseFloat(contract.amount);
+    const tax = items.reduce((s: number, i: any) => s + ((parseFloat(i.total_price) || 0) * ((parseFloat(i.tax_rate) || 8.1) / 100)), 0);
+    const discountAmt = subtotal * ((contract.discount_percent || 0) / 100);
+    const total = subtotal - discountAmt + tax;
+
+    const footRows: any[] = [
+      ['', '', '', '', 'Zwischensumme:', `CHF ${subtotal.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`],
+    ];
+    if (discountAmt > 0) footRows.push(['', '', '', '', `Rabatt (${contract.discount_percent}%):`, `-CHF ${discountAmt.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
+    footRows.push(['', '', '', '', 'MwSt (8.1%):', `CHF ${tax.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
+    footRows.push(['', '', '', '', 'GESAMTBETRAG:', `CHF ${total.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
+
+    doc.autoTable({
+      startY: afterDetails + 4,
+      head: [['Position', 'Beschreibung', 'Menge', 'Einzelpreis', 'MwSt', 'Total']],
+      body: tableRows,
+      foot: footRows,
+      theme: 'striped',
+      headStyles: { fillColor: [30, 41, 59], textColor: [255, 255, 255], fontSize: 8, fontStyle: 'bold' },
+      bodyStyles: { fontSize: 9, textColor: [51, 65, 85] },
+      footStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold', fontSize: 9 },
+      columnStyles: {
+        0: { cellWidth: 40 },
+        1: { cellWidth: 55 },
+        2: { cellWidth: 15, halign: 'center' },
+        3: { cellWidth: 28, halign: 'right' },
+        4: { cellWidth: 18, halign: 'center' },
+        5: { cellWidth: 28, halign: 'right' },
+      },
+      margin: { left: 20, right: 20 },
+    });
+
+    // ─── Bemerkungen ──────────────────────────────────────────────────────────
+    let afterTable = doc.lastAutoTable.finalY + 10;
+    if (contract.notes) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+      doc.text('BEMERKUNGEN', 20, afterTable);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      const splitNotes = doc.splitTextToSize(contract.notes, W - 40);
+      doc.text(splitNotes, 20, afterTable + 6);
+      afterTable += 6 + splitNotes.length * 5;
     }
+
+    // ─── Unterschriften ───────────────────────────────────────────────────────
+    const sigY = Math.max(afterTable + 10, H - 80);
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(20, sigY + 20, 88, sigY + 20);
+    doc.line(112, sigY + 20, 180, sigY + 20);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 116, 139);
+    doc.text('HED-IT Joel Hediger – Auftragnehmer', 20, sigY + 25);
+    doc.text('Auftraggeber', 112, sigY + 25);
+    doc.text(`Ort/Datum: ________________________`, 20, sigY + 32);
+    doc.text(`Ort/Datum: ________________________`, 112, sigY + 32);
+
+    if (contract.signature_date) {
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(22, 163, 74);
+      doc.setFontSize(9);
+      doc.text(`✓ Elektronisch signiert am ${new Date(contract.signature_date).toLocaleString('de-CH')}`, 112, sigY + 40);
+      if (contract.signature_data && contract.signature_data.startsWith('data:image')) {
+        try {
+          doc.addImage(contract.signature_data, 'PNG', 112, sigY - 18, 60, 18);
+        } catch (_) { /* signature image optional */ }
+      }
+    }
+
+    // ─── Footer ───────────────────────────────────────────────────────────────
+    doc.setFillColor(30, 41, 59);
+    doc.rect(0, H - 18, W, 18, 'F');
+    doc.setTextColor(148, 163, 184);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.text('HED-IT Joel Hediger  ·  Web & Marketing Solutions  ·  info@hed-it.ch  ·  www.hed-it.ch', W / 2, H - 10, { align: 'center' });
+    doc.text('Alle Preise in CHF  ·  Zahlbar gemäss Rechnung  ·  Gerichtsstand: Schweiz', W / 2, H - 5, { align: 'center' });
 
     const pdfOutput = doc.output('arraybuffer');
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=Vertrag_${contract.id.substring(0, 8)}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename=Vertrag_${contractNum.replace(/[^a-zA-Z0-9-]/g, '_')}.pdf`);
     res.send(Buffer.from(pdfOutput));
   } catch (error) {
-    console.error('Error generating PDF:', error);
-    res.status(500).send('Error');
+    console.error('Error generating contract PDF:', error);
+    res.status(500).send('Error generating PDF');
   }
 });
 
@@ -3586,6 +4029,86 @@ app.get('/api/finance/metrics', authenticateToken, authorizeRole('admin', 'manag
 });
 
 
+
+// ─── Contract Expiry Warning (cron-trigger or manual) ──────────────────────────
+const sendContractExpiryWarnings = async () => {
+  try {
+    const expiring = await pool.query(`
+      SELECT c.*, comp.name as company_name,
+        EXTRACT(DAY FROM (c.end_date - CURRENT_DATE)) as days_left
+      FROM contracts c
+      LEFT JOIN companies comp ON c.company_id = comp.id
+      WHERE c.status = 'active'
+        AND c.end_date IS NOT NULL
+        AND c.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '60 days'
+      ORDER BY c.end_date ASC
+    `);
+
+    for (const contract of expiring.rows) {
+      const daysLeft = Math.round(contract.days_left);
+      if (daysLeft !== 30 && daysLeft !== 60) continue;
+
+      // Admin warning
+      await resend.emails.send({
+        from: 'HED-IT <info@hed-it.ch>',
+        to: 'joel.hediger@hed-it.ch',
+        subject: `Vertrag läuft in ${daysLeft} Tagen ab: ${contract.title}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0">
+            <div style="background:#1e3a5f;padding:28px 32px">
+              <h2 style="color:#fff;margin:0;font-size:20px">HED-IT · Vertragswarnung</h2>
+            </div>
+            <div style="padding:32px">
+              <p>Der folgende Vertrag läuft in <strong>${daysLeft} Tagen</strong> ab:</p>
+              <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:16px;border-radius:4px;margin:16px 0">
+                <p style="margin:0;font-weight:700">${contract.title}</p>
+                <p style="margin:4px 0 0;font-size:13px;color:#64748b">Firma: ${contract.company_name || '-'} · Enddatum: ${new Date(contract.end_date).toLocaleDateString('de-CH')}</p>
+              </div>
+              <a href="https://hed-it.ch/contracts" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">Vertrag ansehen →</a>
+            </div>
+          </div>`
+      });
+
+      // Customer warning
+      if (contract.company_id) {
+        const contactRes = await pool.query(
+          `SELECT email, first_name FROM contacts WHERE company_id = $1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`,
+          [contract.company_id]
+        );
+        if (contactRes.rows.length > 0 && contactRes.rows[0].email) {
+          const { email: custEmail, first_name } = contactRes.rows[0];
+          await resend.emails.send({
+            from: 'HED-IT <info@hed-it.ch>',
+            to: custEmail,
+            subject: `Ihr Vertrag läuft in ${daysLeft} Tagen ab`,
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border-radius:8px;overflow:hidden;border:1px solid #e2e8f0">
+                <div style="background:#1e3a5f;padding:28px 32px">
+                  <h2 style="color:#fff;margin:0;font-size:20px">HED-IT GmbH</h2>
+                  <p style="color:#93c5fd;margin:4px 0 0;font-size:13px">Vertragsablauf</p>
+                </div>
+                <div style="padding:32px">
+                  <p>Hallo ${first_name || 'Kunde'},</p>
+                  <p>Ihr Vertrag <strong>${contract.title}</strong> läuft in <strong>${daysLeft} Tagen</strong> ab (${new Date(contract.end_date).toLocaleDateString('de-CH')}).</p>
+                  <p>Falls Sie den Vertrag verlängern oder anpassen möchten, kontaktieren Sie uns gerne.</p>
+                  <a href="https://portal.hed-it.ch/portal/contracts" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">Vertrag im Portal ansehen →</a>
+                </div>
+                <div style="background:#f1f5f9;padding:16px 32px;text-align:center;font-size:11px;color:#94a3b8">
+                  HED-IT GmbH · info@hed-it.ch
+                </div>
+              </div>`
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Contract expiry warning error:', err);
+  }
+};
+
+// Run contract expiry check daily at startup and every 24h
+setInterval(sendContractExpiryWarnings, 24 * 60 * 60 * 1000);
+sendContractExpiryWarnings();
 
 // For any other request, serve the index.html (Client Side Routing)
 app.get(/.*/, (req, res) => {
