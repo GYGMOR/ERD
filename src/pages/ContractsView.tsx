@@ -79,14 +79,16 @@ export const ContractsView = () => {
           tenant_id: tenantId,
           assigned_to: currentUser?.id,
           amount: totalAmount,
-          items: items
+          items: items,
+          client_type: newCon.client_type || 'business',
+          discount_percent: newCon.discount_percent || 0
         }),
       });
       const data = await res.json();
       if (data.success) {
         setContracts([data.data, ...contracts]);
         setShowModal(false);
-        setNewCon({ title: '', status: 'active', billing_interval: 'monthly' });
+        setNewCon({ title: '', status: 'active', billing_interval: 'monthly', client_type: 'business', discount_percent: 0 });
       }
     } catch (err) {
       console.error('Error creating contract:', err);
@@ -282,6 +284,24 @@ export const ContractsView = () => {
                     <option value="quarterly">Quartalsweise</option>
                     <option value="yearly">Jährlich</option>
                     <option value="one_time">Einmalig</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="input-label">Kundentyp / Rabatt</label>
+                  <select
+                    className="input-field"
+                    value={newCon.client_type || 'business'}
+                    onChange={(e) => {
+                      const type = e.target.value;
+                      let disc = 0;
+                      if (type === 'association') disc = 50;
+                      if (type === 'private') disc = 70;
+                      setNewCon({ ...newCon, client_type: type, discount_percent: disc });
+                    }}
+                  >
+                    <option value="business">Unternehmen (B2B) - 0% Rabatt</option>
+                    <option value="association">Verein - 50% Rabatt</option>
+                    <option value="private">Einzelperson (Privat) - 70% Rabatt</option>
                   </select>
                 </div>
               </div>

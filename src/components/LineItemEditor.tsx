@@ -26,7 +26,34 @@ export const LineItemEditor = ({ items, onChange }: LineItemEditorProps) => {
     fetch('/api/products')
       .then(res => res.json())
       .then(data => {
-        if (data.success) setProducts(data.data);
+        const dbProducts = data.success ? data.data : [];
+        
+        // Add Calculator Items
+        const calculatorItems: Product[] = [
+          // Project Types
+          { id: 'p1', name: 'Landing Page', category: 'Projekt Typ', price: '1500', tax_rate: '8.1', description: 'Einfache One-Page Webseite' } as any,
+          { id: 'p2', name: 'Unternehmenswebseite', category: 'Projekt Typ', price: '3500', tax_rate: '8.1', description: 'Standard Webseite für Firmen' } as any,
+          { id: 'p3', name: 'Webshop / E-Commerce', category: 'Projekt Typ', price: '8000', tax_rate: '8.1', description: 'Vollwertiger Online-Shop' } as any,
+          { id: 'p4', name: 'Custom App / Plattform', category: 'Projekt Typ', price: '5000', tax_rate: '8.1', description: 'Individuelle Web-Applikation' } as any,
+          
+          // Design
+          { id: 'd1', name: 'Design: Template-Basiert', category: 'Design', price: '0', tax_rate: '8.1', description: 'Verwendung von Standard-Vorlagen' } as any,
+          { id: 'd2', name: 'Design: Individuell', category: 'Design', price: '2000', tax_rate: '8.1', description: 'Massgeschneidertes Design' } as any,
+          { id: 'd3', name: 'Design: Premium / 3D', category: 'Design', price: '4500', tax_rate: '8.1', description: 'High-End Design mit Animationen' } as any,
+          
+          // Features
+          { id: 'f1', name: 'Feature: CMS System', category: 'Features', price: '1600', tax_rate: '8.1', description: 'Inhaltsverwaltungssystem' } as any,
+          { id: 'f2', name: 'Feature: SEO Basis', category: 'Features', price: '1200', tax_rate: '8.1', description: 'Grundlegende Suchmaschinenoptimierung' } as any,
+          { id: 'f3', name: 'Feature: Mehrsprachigkeit', category: 'Features', price: '2100', tax_rate: '8.1', description: 'Support für mehrere Sprachen' } as any,
+          
+          // Monthly Services
+          { id: 's1', name: 'SEO & Content Paket', category: 'Service (Mt)', price: '120', tax_rate: '8.1', description: 'Monatliche SEO Optimierung' } as any,
+          { id: 's2', name: 'Newsletter Marketing', category: 'Service (Mt)', price: '49', tax_rate: '8.1', description: 'Monatlicher Newsletter Versand' } as any,
+          { id: 's3', name: 'Managed Security', category: 'Service (Mt)', price: '29', tax_rate: '8.1', description: 'Sicherheit & Backups' } as any,
+          { id: 's4', name: 'Cloud Hosting Basic', category: 'Service (Mt)', price: '15', tax_rate: '8.1', description: 'Web-Hosting & Support' } as any,
+        ];
+
+        setProducts([...calculatorItems, ...dbProducts]);
       });
   }, []);
 

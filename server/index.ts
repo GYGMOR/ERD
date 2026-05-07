@@ -198,6 +198,10 @@ async function initDatabase() {
     await pool.query('ALTER TABLE projects ADD COLUMN IF NOT EXISTS assigned_to UUID REFERENCES users(id)').catch(() => {});
     await pool.query('ALTER TABLE tickets ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(() => {});
     await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_data TEXT').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS signature_date TIMESTAMP').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS client_type TEXT').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS discount_percent DECIMAL DEFAULT 0').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS items JSONB').catch(() => {});
     await pool.query('ALTER TABLE kb_articles ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false, ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES kb_articles(id) ON DELETE CASCADE').catch(() => {});
     await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
     await pool.query('ALTER TABLE files ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES files(id) ON DELETE CASCADE').catch(() => {});
@@ -1918,26 +1922,59 @@ app.get('/api/contracts', async (req: express.Request, res: express.Response) =>
 });
 
 app.post('/api/contracts', async (req: express.Request, res: express.Response) => {
-  const { tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes } = req.body;
+  const { tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes, client_type, discount_percent, items } = req.body;
   try {
     const result = await pool.query(
-      `INSERT INTO contracts (tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING *`,
-      [tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status || 'draft', notes]
+      `INSERT INTO contracts (tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status, notes, client_type, discount_percent, items)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) RETURNING *`,
+      [tenant_id, title, contract_number, contract_type, company_id, contact_id, assigned_to, start_date, end_date, notice_period_days, amount, billing_interval, status || 'pending_signature', notes, client_type, discount_percent || 0, JSON.stringify(items || [])]
     );
+
+    const contract = result.rows[0];
 
     // Notification for new contract
     await createNotification({
       tenant_id: tenant_id,
       target_role: 'admin',
       type: 'contract',
-      entity_id: result.rows[0].id,
+      entity_id: contract.id,
       title: 'Neuer Vertrag',
       message: `Vertrag "${title}" wurde angelegt.`,
-      link: `/contracts?openContract=${result.rows[0].id}`
+      link: `/contracts?openContract=${contract.id}`
     });
 
-    res.status(201).json({ success: true, data: result.rows[0] });
+    // Send Email to Customer if company_id is provided
+    if (company_id) {
+      const contactRes = await pool.query('SELECT email, first_name FROM contacts WHERE company_id = $1 AND is_primary = true LIMIT 1', [company_id]);
+      const customerEmail = contactRes.rows[0]?.email;
+      const customerName = contactRes.rows[0]?.first_name || 'Sehr geehrte Damen und Herren';
+
+      if (customerEmail) {
+        await resend.emails.send({
+          from: EMAIL_INFO,
+          to: customerEmail,
+          subject: `Neuer Vertrag: ${title}`,
+          html: `
+            <div style="font-family: sans-serif; line-height: 1.5; color: #333;">
+              <h2>Guten Tag ${customerName},</h2>
+              <p>Wir haben einen neuen Vertrag für Sie im Portal bereitgestellt:</p>
+              <div style="background: #f4f4f4; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <strong>Vertrag:</strong> ${title}<br>
+                <strong>Betrag:</strong> CHF ${parseFloat(amount).toFixed(2)} (${billing_interval})
+              </div>
+              <p>Bitte loggen Sie sich in Ihr Kundenportal ein, um den Vertrag online zu prüfen und zu signieren.</p>
+              <a href="https://portal.hed-it.ch/portal/contracts" style="display: inline-block; background: #2563eb; color: #fff; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">Zum Portal</a>
+              <p style="margin-top: 30px; font-size: 12px; color: #666;">
+                HED-IT Web & Marketing<br>
+                www.hed-it.ch
+              </p>
+            </div>
+          `
+        }).catch(err => console.error('Error sending contract email:', err));
+      }
+    }
+
+    res.status(201).json({ success: true, data: contract });
   } catch (error) {
     console.error('Error creating contract:', error);
     res.status(500).json({ success: false, error: 'Server error creating contract' });
@@ -2950,6 +2987,99 @@ app.get('/api/portal/contracts', authenticateToken, async (req: AuthenticatedReq
   } catch (error) {
     console.error('Portal: Error fetching contracts/files:', error);
     res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+app.post('/api/portal/contracts/:id/sign', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  const { signatureData } = req.body;
+
+  try {
+    // 1. Update Contract
+    const contractRes = await pool.query(
+      `UPDATE contracts 
+       SET status = 'active', signature_data = $1, signature_date = NOW() 
+       WHERE id = $2 RETURNING *`,
+      [signatureData, id]
+    );
+
+    if (contractRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Contract not found' });
+    }
+
+    const contract = contractRes.rows[0];
+
+    // 2. Create Initial Invoice
+    let dueDate = new Date();
+    if (contract.billing_interval === 'monthly') {
+      dueDate.setDate(20); 
+    } else {
+      dueDate.setDate(dueDate.getDate() + 30);
+    }
+
+    const actualDueDate = new Date(dueDate);
+    actualDueDate.setDate(actualDueDate.getDate() + 10); // + 10 days "zahlbar"
+
+    await pool.query(
+      `INSERT INTO invoices (tenant_id, company_id, title, amount, status, due_date, contract_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        contract.tenant_id, 
+        contract.company_id, 
+        `Rechnung zu Vertrag: ${contract.title}`, 
+        contract.amount, 
+        'open', 
+        actualDueDate,
+        contract.id
+      ]
+    );
+
+    // 3. Notify Admin
+    await createNotification({
+      tenant_id: contract.tenant_id,
+      target_role: 'admin',
+      type: 'contract',
+      entity_id: contract.id,
+      title: 'Vertrag signiert',
+      message: `Der Vertrag "${contract.title}" wurde vom Kunden signiert.`,
+      link: `/contracts?openContract=${contract.id}`
+    });
+
+    res.json({ success: true, message: 'Vertrag erfolgreich signiert!' });
+  } catch (error) {
+    console.error('Error signing contract:', error);
+    res.status(500).json({ success: false, error: 'Server error during signing' });
+  }
+});
+
+app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { id } = req.params;
+  try {
+    const result = await pool.query('SELECT * FROM contracts WHERE id = $1', [id]);
+    if (result.rows.length === 0) return res.status(404).send('Not found');
+    const contract = result.rows[0];
+
+    const doc = new jsPDF();
+    doc.setFontSize(22);
+    doc.text('DIENSTLEISTUNGSVERTRAG', 20, 20);
+    doc.setFontSize(12);
+    doc.text(`Vertrag Nr: ${contract.contract_number || contract.id.substring(0, 8)}`, 20, 30);
+    doc.text(`Titel: ${contract.title}`, 20, 40);
+    doc.text(`Intervall: ${contract.billing_interval}`, 20, 50);
+    doc.text(`Betrag: CHF ${parseFloat(contract.amount).toFixed(2)}`, 20, 60);
+    doc.text(`Start: ${contract.start_date ? new Date(contract.start_date).toLocaleDateString() : '-'}`, 20, 70);
+    
+    if (contract.signature_date) {
+      doc.text(`Signiert am: ${new Date(contract.signature_date).toLocaleString()}`, 20, 90);
+    }
+
+    const pdfOutput = doc.output('arraybuffer');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Vertrag_${contract.id.substring(0, 8)}.pdf`);
+    res.send(Buffer.from(pdfOutput));
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    res.status(500).send('Error');
   }
 });
 
