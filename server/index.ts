@@ -15,6 +15,7 @@ import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import Stripe from 'stripe';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,7 +30,14 @@ const port = parseInt(process.env.PORT || '3001', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_for_dev';
 
 app.use(cors());
-app.use(express.json());
+// Stripe webhooks need the raw body for signature verification
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.originalUrl === '/api/stripe/webhook') {
+    express.raw({ type: 'application/json' })(req, res, next);
+  } else {
+    express.json()(req, res, next);
+  }
+});
 
 // Resend Email Setup
 const resendApiKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim().replace(/^["']|["']$/g, '') : null;
@@ -40,6 +48,25 @@ const resend = new Resend(resendApiKey || 'missing_key');
 const EMAIL_NO_REPLY = 'HED-IT <no-reply@hed-it.ch>';
 const EMAIL_INFO = 'HED-IT <info@hed-it.ch>';
 const EMAIL_ADMIN_INTERNAL = 'joel.hediger@hed-it.ch';
+
+// ─── Stripe Setup ─────────────────────────────────────────────────────────────
+const stripe = process.env.STRIPE_SECRET_KEY
+  ? new Stripe(process.env.STRIPE_SECRET_KEY as string)
+  : null;
+if (!stripe) console.warn('WARNING: STRIPE_SECRET_KEY not set — payments disabled.');
+
+async function getOrCreateStripeCustomer(companyId: string): Promise<string> {
+  const comp = await pool.query('SELECT stripe_customer_id, name, email FROM companies WHERE id = $1', [companyId]);
+  if (!comp.rows[0]) throw new Error('Company not found');
+  if (comp.rows[0].stripe_customer_id) return comp.rows[0].stripe_customer_id;
+  const customer = await stripe!.customers.create({
+    name: comp.rows[0].name,
+    email: comp.rows[0].email,
+    metadata: { company_id: companyId },
+  });
+  await pool.query('UPDATE companies SET stripe_customer_id = $1 WHERE id = $2', [customer.id, companyId]);
+  return customer.id;
+}
 
 // Serve static files from the frontend build directory
 const distPath = path.join(__dirname, '../dist');
@@ -152,6 +179,9 @@ async function initDatabase() {
     // 2b. Company columns
     await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS address TEXT').catch(() => {});
     await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS website TEXT').catch(() => {});
+    await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP').catch(() => {});
     await pool.query('ALTER TABLE companies ADD COLUMN IF NOT EXISTS industry TEXT').catch(() => {});
 
     // 3. Tables
@@ -4172,6 +4202,121 @@ const sendContractExpiryWarnings = async () => {
 // Run contract expiry check daily at startup and every 24h
 setInterval(sendContractExpiryWarnings, 24 * 60 * 60 * 1000);
 sendContractExpiryWarnings();
+
+// ─── Stripe Routes ────────────────────────────────────────────────────────────
+
+// GET /api/stripe/config — publishable key for frontend
+app.get('/api/stripe/config', authenticateToken, (_req, res) => {
+  res.json({ publishable_key: process.env.STRIPE_PUBLISHABLE_KEY || '' });
+});
+
+// POST /api/stripe/payment-intent — create PaymentIntent for an invoice
+app.post('/api/stripe/payment-intent', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured yet.' });
+  const { invoice_id } = req.body;
+  try {
+    const inv = await pool.query('SELECT * FROM invoices WHERE id = $1', [invoice_id]);
+    if (!inv.rows[0]) return res.status(404).json({ error: 'Invoice not found' });
+    const invoice = inv.rows[0];
+
+    // Reuse existing PaymentIntent if not yet paid
+    if (invoice.stripe_payment_intent_id) {
+      const existing = await stripe.paymentIntents.retrieve(invoice.stripe_payment_intent_id);
+      if (existing.status !== 'succeeded') {
+        return res.json({ client_secret: existing.client_secret });
+      }
+    }
+
+    const customerId = await getOrCreateStripeCustomer(invoice.company_id);
+    const amountRappen = Math.round(parseFloat(invoice.amount) * 100);
+
+    const pi = await stripe.paymentIntents.create({
+      amount: amountRappen,
+      currency: 'chf',
+      customer: customerId,
+      setup_future_usage: 'off_session',
+      description: invoice.title || `Rechnung ${invoice.invoice_number || invoice.id.substring(0, 8)}`,
+      metadata: { invoice_id: invoice.id, company_id: invoice.company_id },
+      automatic_payment_methods: { enabled: true },
+    });
+
+    await pool.query('UPDATE invoices SET stripe_payment_intent_id = $1 WHERE id = $2', [pi.id, invoice.id]);
+    res.json({ client_secret: pi.client_secret });
+  } catch (err: any) {
+    console.error('Stripe payment-intent error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/stripe/payment-methods — list saved cards for the customer
+app.get('/api/stripe/payment-methods', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured yet.' });
+  try {
+    const userRow = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user!.id]);
+    const companyId = userRow.rows[0]?.company_id;
+    if (!companyId) return res.json({ data: [] });
+    const comp = await pool.query('SELECT stripe_customer_id FROM companies WHERE id = $1', [companyId]);
+    const customerId = comp.rows[0]?.stripe_customer_id;
+    if (!customerId) return res.json({ data: [] });
+    const pms = await stripe.paymentMethods.list({ customer: customerId, type: 'card' });
+    res.json({ data: pms.data });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/stripe/payment-methods/:pmId — detach a saved card
+app.delete('/api/stripe/payment-methods/:pmId', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  if (!stripe) return res.status(503).json({ error: 'Payments not configured yet.' });
+  try {
+    await stripe.paymentMethods.detach(req.params.pmId);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/stripe/webhook — Stripe events
+app.post('/api/stripe/webhook', async (req: express.Request, res: express.Response) => {
+  const sig = req.headers['stripe-signature'] as string;
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !secret) return res.status(503).send('Stripe not configured');
+
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body as Buffer, sig, secret);
+  } catch (err: any) {
+    console.error('Stripe webhook signature error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'payment_intent.succeeded') {
+    const pi = event.data.object as Stripe.PaymentIntent;
+    const invoiceId = pi.metadata?.invoice_id;
+    if (invoiceId) {
+      await pool.query(`UPDATE invoices SET status = 'paid', paid_at = NOW() WHERE id = $1`, [invoiceId])
+        .catch(e => console.error('Webhook DB update failed:', e));
+      console.log(`[Stripe] Invoice ${invoiceId} marked paid.`);
+    }
+    // Save default payment method on customer
+    if (pi.customer && pi.payment_method) {
+      await stripe.customers.update(pi.customer as string, {
+        invoice_settings: { default_payment_method: pi.payment_method as string },
+      }).catch(() => {});
+    }
+  }
+
+  if (event.type === 'setup_intent.succeeded') {
+    const si = event.data.object as Stripe.SetupIntent;
+    if (si.customer && si.payment_method) {
+      await stripe.customers.update(si.customer as string, {
+        invoice_settings: { default_payment_method: si.payment_method as string },
+      }).catch(() => {});
+    }
+  }
+
+  res.json({ received: true });
+});
 
 // For any other request, serve the index.html (Client Side Routing)
 app.get(/.*/, (req, res) => {
