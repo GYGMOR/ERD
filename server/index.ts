@@ -2127,6 +2127,67 @@ app.post('/api/contracts', async (req: express.Request, res: express.Response) =
 });
 
 // ─── Products / Produkte Routes ───────────────────────────────────────────────
+
+// Seed default product catalog for this tenant
+app.post('/api/products/seed-defaults', authenticateToken, authorizeRole('admin'), async (req: AuthenticatedRequest, res: express.Response) => {
+  const { tenant_id } = req.user!;
+  try {
+    // Ensure columns exist
+    await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT FALSE`);
+    await pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE SET NULL`);
+
+    const existing = await pool.query('SELECT COUNT(*) FROM products WHERE tenant_id = $1', [tenant_id]);
+    if (parseInt(existing.rows[0].count) > 0) {
+      return res.json({ success: false, error: 'Produkte bereits vorhanden. Bitte zuerst alle löschen oder direkt hinzufügen.' });
+    }
+
+    const defaults = [
+      // Webprojekte
+      { name: 'Landing Page',            category: 'Webprojekte',     description: 'Einseitige Webseite',                              price: 1500,   recurring: false, unit: 'Projekt' },
+      { name: 'Unternehmenswebseite',    category: 'Webprojekte',     description: 'Mehrseitige Website',                              price: 3500,   recurring: false, unit: 'Projekt' },
+      { name: 'Webshop',                 category: 'Webprojekte',     description: 'Online-Shop mit Zahlungsabwicklung',               price: 8000,   recurring: false, unit: 'Projekt' },
+      { name: 'Web Applikation',         category: 'Webprojekte',     description: 'Massgeschneiderte Web-App',                        price: 12000,  recurring: false, unit: 'Projekt' },
+      { name: 'Mobile App',              category: 'Webprojekte',     description: 'Native iOS/Android App',                           price: 15000,  recurring: false, unit: 'Projekt' },
+      // Design
+      { name: 'Template Basiert',        category: 'Design',          description: 'Bewährte Vorlagen – im Basispreis inklusive',      price: 0,      recurring: false, unit: 'Pauschal' },
+      { name: 'Individuelles Design',    category: 'Design',          description: 'Design nach Ihren Wünschen',                       price: 2000,   recurring: false, unit: 'Pauschal' },
+      { name: 'Premium / 3D Design',     category: 'Design',          description: 'Hochwertige Animationen & 3D-Elemente',            price: 4500,   recurring: false, unit: 'Pauschal' },
+      // Features
+      { name: 'CMS Integration',         category: 'Features',        description: 'Inhalte selbst bearbeiten',                        price: 1600,   recurring: false, unit: 'Pauschal' },
+      { name: 'SEO Optimierung',         category: 'Features',        description: 'Bessere Sichtbarkeit bei Google',                  price: 1200,   recurring: false, unit: 'Pauschal' },
+      { name: 'Mehrsprachigkeit',        category: 'Features',        description: 'Website in mehreren Sprachen',                     price: 2100,   recurring: false, unit: 'Pauschal' },
+      { name: 'Erweiterte Analyse',      category: 'Features',        description: 'Detaillierte Besucherstatistiken',                 price: 800,    recurring: false, unit: 'Pauschal' },
+      { name: 'Newsletter Setup',        category: 'Features',        description: 'E-Mail Marketing Integration',                     price: 1200,   recurring: false, unit: 'Pauschal' },
+      // Monthly services
+      { name: 'SEO Paket Pro',           category: 'Monthly',         description: 'Optimierung für Top-Rankings bei Google',          price: 120,    recurring: true,  unit: 'Monat' },
+      { name: 'Newsletter System',       category: 'Monthly',         description: 'E-Mail Marketing System inkl. Vorlagen',           price: 49,     recurring: true,  unit: 'Monat' },
+      { name: 'Extended Security / WAF', category: 'Monthly',         description: 'WAF & DDoS Schutz mit 24/7 Überwachung',           price: 29,     recurring: true,  unit: 'Monat' },
+      { name: 'Cloud Speicher 1TB',      category: 'Monthly',         description: 'Sicheres Cloud-Backup für Firmendaten',            price: 15,     recurring: true,  unit: 'Monat' },
+      { name: 'Backup & Recovery',       category: 'Monthly',         description: 'Automatische Datensicherung & Wiederherstellung',  price: 29,     recurring: true,  unit: 'Monat' },
+      { name: 'Microsoft 365 Lizenz',    category: 'Monthly',         description: 'Microsoft 365 Business Basic Lizenz',              price: 12.5,   recurring: true,  unit: 'Monat' },
+      { name: 'Extended Support 24/7',   category: 'Monthly',         description: 'Rund-um-die-Uhr Support & Monitoring',             price: 49,     recurring: true,  unit: 'Monat' },
+      { name: 'Wartung & Hosting',       category: 'Monthly',         description: 'Hosting, Updates, SSL & technische Wartung',       price: 39,     recurring: true,  unit: 'Monat' },
+      // Hourly rates
+      { name: 'Consulting / Stunde',     category: 'Dienstleistung',  description: 'Beratung & Konzeption',                           price: 120,    recurring: false, unit: 'Stunde' },
+      { name: 'Entwicklung / Stunde',    category: 'Dienstleistung',  description: 'Umsetzung & Programmierung',                      price: 140,    recurring: false, unit: 'Stunde' },
+      { name: 'Support / Stunde',        category: 'Dienstleistung',  description: 'Technischer Support',                             price: 95,     recurring: false, unit: 'Stunde' },
+    ];
+
+    for (const p of defaults) {
+      await pool.query(
+        `INSERT INTO products (tenant_id, name, category, description, price, tax_rate, unit, is_recurring, is_active)
+         VALUES ($1, $2, $3, $4, $5, 8.1, $6, $7, true)`,
+        [tenant_id, p.name, p.category, p.description, p.price, p.unit, p.recurring]
+      );
+    }
+
+    res.json({ success: true, message: `${defaults.length} Standardprodukte wurden erfolgreich eingefügt.` });
+  } catch (error) {
+    console.error('Seed products error:', error);
+    res.status(500).json({ success: false, error: 'Fehler beim Einfügen der Produkte.' });
+  }
+});
+
 app.get('/api/products', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
@@ -4117,8 +4178,13 @@ app.get(/.*/, (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
-// Start server
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Server running on port ${port} and accessible on the network`);
-});
+// Ensure products table has required columns, then start
+pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT FALSE`)
+  .then(() => pool.query(`ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE SET NULL`))
+  .catch(err => console.error('Migration warning (products columns):', err))
+  .finally(() => {
+    app.listen(port, '0.0.0.0', () => {
+      console.log(`Server running on port ${port} and accessible on the network`);
+    });
+  });
 

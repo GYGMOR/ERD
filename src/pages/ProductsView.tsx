@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Package, Plus, Search, Filter, Tag, Hash, Archive, Folder, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Package, Plus, Search, Filter, Tag, Hash, Archive, Folder, ChevronRight, ArrowLeft, Download } from 'lucide-react';
 import { getTenantId, getToken } from '../utils/auth';
 import type { Product } from '../types/entities';
 
@@ -20,6 +20,9 @@ export const ProductsView = () => {
     is_active: true,
     is_folder: false,
   });
+
+  const [seeding, setSeeding] = useState(false);
+  const [seedMsg, setSeedMsg] = useState('');
 
   const tenantId = getTenantId();
 
@@ -113,6 +116,29 @@ export const ProductsView = () => {
     }
   };
 
+  const handleSeedDefaults = async () => {
+    if (!window.confirm('Standard-Produkte (23 Einträge aus dem HED-IT Kalkulator) einfügen? Dies funktioniert nur wenn noch keine Produkte vorhanden sind.')) return;
+    setSeeding(true);
+    setSeedMsg('');
+    try {
+      const res = await fetch('/api/products/seed-defaults', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSeedMsg(data.message || 'Produkte erfolgreich eingefügt!');
+        fetchProducts();
+      } else {
+        setSeedMsg(data.error || 'Fehler beim Einfügen.');
+      }
+    } catch {
+      setSeedMsg('Netzwerkfehler.');
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   const filtered = products.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.sku?.toLowerCase().includes(search.toLowerCase()) ||
@@ -130,7 +156,18 @@ export const ProductsView = () => {
             Zentraler Katalog aller Artikel, Lizenzen und Dienstleistungen.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          {seedMsg && (
+            <span style={{ fontSize: 12, color: seedMsg.includes('Fehler') || seedMsg.includes('bereits') ? 'var(--color-danger)' : 'var(--color-success)', fontWeight: 600 }}>
+              {seedMsg}
+            </span>
+          )}
+          {products.length === 0 && (
+            <button className="btn-secondary" onClick={handleSeedDefaults} disabled={seeding} style={{ borderColor: 'var(--color-primary)', color: 'var(--color-primary)' }}>
+              <Download size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} />
+              {seeding ? 'Wird geladen...' : 'Standard-Produkte laden'}
+            </button>
+          )}
           <button className="btn-secondary" onClick={() => setShowFolderModal(true)}>
             <Plus size={16} style={{ marginRight: 8, verticalAlign: 'middle' }} /> Neuer Ordner
           </button>
