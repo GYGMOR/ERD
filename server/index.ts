@@ -330,6 +330,8 @@ async function initDatabase() {
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_at TIMESTAMP').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_before BOOLEAN DEFAULT FALSE').catch(() => {});
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS reminder_sent_overdue BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS mahnung_level INTEGER DEFAULT 0').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS last_mahnung_at TIMESTAMP').catch(() => {});
 
     // accounting_entries table for manual bookings
     await pool.query(`
@@ -344,9 +346,13 @@ async function initDatabase() {
         date DATE NOT NULL DEFAULT CURRENT_DATE,
         company_id UUID,
         invoice_id UUID,
+        category TEXT DEFAULT 'Sonstiges',
+        receipt_note TEXT,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `).catch(() => {});
+    await pool.query('ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS category TEXT DEFAULT \'Sonstiges\'').catch(() => {});
+    await pool.query('ALTER TABLE accounting_entries ADD COLUMN IF NOT EXISTS receipt_note TEXT').catch(() => {});
 
     console.log('[INFO] Database initialization complete.');
   } catch (err) {
@@ -4209,17 +4215,149 @@ app.get('/api/accounting', authenticateToken, authorizeRole('admin', 'manager'),
   }
 });
 
-// POST /api/accounting — create manual booking
+// POST /api/accounting — create manual booking (income or expense)
 app.post('/api/accounting', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
-    const { title, description, entry_type, amount, currency, date, company_id } = req.body;
+    const { title, description, entry_type, amount, currency, date, company_id, category, receipt_note } = req.body;
     const r = await pool.query(
-      `INSERT INTO accounting_entries (tenant_id, title, description, entry_type, amount, currency, date, company_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [tenant_id, title, description || null, entry_type || 'income', amount || 0, currency || 'CHF', date || new Date().toISOString().split('T')[0], company_id || null]
+      `INSERT INTO accounting_entries (tenant_id, title, description, entry_type, amount, currency, date, company_id, category, receipt_note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [tenant_id, title, description || null, entry_type || 'expense', amount || 0, currency || 'CHF',
+       date || new Date().toISOString().split('T')[0], company_id || null, category || 'Sonstiges', receipt_note || null]
     );
     res.status(201).json({ success: true, data: r.rows[0] });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/accounting/:id
+app.delete('/api/accounting/:id', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    await pool.query(`DELETE FROM accounting_entries WHERE id=$1 AND tenant_id=$2`, [req.params.id, tenant_id]);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /api/accounting/mwst — quarterly VAT report
+app.get('/api/accounting/mwst', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    const quarters = await pool.query(`
+      SELECT
+        CEIL(DATE_PART('month', COALESCE(issue_date, created_at)) / 3.0)::int AS quarter,
+        SUM(amount) AS brutto,
+        SUM(amount / 1.081) AS netto,
+        SUM(amount - amount / 1.081) AS mwst,
+        COUNT(*) AS count
+      FROM invoices
+      WHERE tenant_id = $1
+        AND EXTRACT(year FROM COALESCE(issue_date, created_at)) = $2
+        AND status = 'paid'
+      GROUP BY quarter ORDER BY quarter
+    `, [tenant_id, year]);
+
+    const expenses = await pool.query(`
+      SELECT
+        CEIL(DATE_PART('month', date) / 3.0)::int AS quarter,
+        SUM(amount) AS total,
+        category
+      FROM accounting_entries
+      WHERE tenant_id = $1 AND entry_type = 'expense'
+        AND EXTRACT(year FROM date) = $2
+      GROUP BY quarter, category ORDER BY quarter
+    `, [tenant_id, year]);
+
+    res.json({ success: true, data: { quarters: quarters.rows, expenses: expenses.rows, year } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/accounting/aging — outstanding receivables by age
+app.get('/api/accounting/aging', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const result = await pool.query(`
+      SELECT i.id, i.invoice_number, i.title, i.amount, i.due_date, i.status, i.mahnung_level,
+             c.name as company_name,
+             (CURRENT_DATE - i.due_date) as days_overdue
+      FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
+      WHERE i.tenant_id = $1 AND i.status IN ('open','sent','overdue')
+        AND i.due_date IS NOT NULL
+      ORDER BY i.due_date ASC
+    `, [tenant_id]);
+
+    const buckets = { current: [] as any[], d30: [] as any[], d60: [] as any[], d90: [] as any[], d90plus: [] as any[] };
+    for (const row of result.rows) {
+      const d = parseInt(row.days_overdue) || 0;
+      if (d <= 0) buckets.current.push(row);
+      else if (d <= 30) buckets.d30.push(row);
+      else if (d <= 60) buckets.d60.push(row);
+      else if (d <= 90) buckets.d90.push(row);
+      else buckets.d90plus.push(row);
+    }
+    const sum = (arr: any[]) => arr.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    res.json({ success: true, data: {
+      buckets,
+      totals: { current: sum(buckets.current), d30: sum(buckets.d30), d60: sum(buckets.d60), d90: sum(buckets.d90), d90plus: sum(buckets.d90plus) }
+    }});
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/accounting/forecast — recurring revenue forecast (next 3 months)
+app.get('/api/accounting/forecast', authenticateToken, authorizeRole('admin', 'manager'), async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { tenant_id } = req.user!;
+    const contracts = await pool.query(`
+      SELECT c.id, c.title, c.amount, c.billing_interval, c.next_invoice_date, comp.name as company_name
+      FROM contracts c LEFT JOIN companies comp ON c.company_id = comp.id
+      WHERE c.tenant_id = $1 AND c.status = 'active' AND c.billing_interval != 'one_time'
+    `, [tenant_id]);
+
+    const months: Record<string, number> = {};
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(); d.setMonth(d.getMonth() + i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      months[key] = 0;
+    }
+    for (const c of contracts.rows) {
+      const amt = parseFloat(c.amount || 0);
+      const interval = c.billing_interval;
+      for (const key of Object.keys(months)) {
+        if (interval === 'monthly') months[key] += amt;
+        else if (interval === 'quarterly' && ['01','04','07','10'].includes(key.split('-')[1])) months[key] += amt;
+        else if (interval === 'yearly' && c.next_invoice_date && new Date(c.next_invoice_date).toISOString().slice(0, 7) === key) months[key] += amt;
+      }
+    }
+    const forecast = Object.entries(months).map(([month, total]) => ({ month, total: parseFloat(total.toFixed(2)) }));
+    res.json({ success: true, data: { forecast, contracts: contracts.rows } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/portal/spending — customer spending summary
+app.get('/api/portal/spending', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
+    if (!companyId) return res.json({ success: true, data: { total_year: 0, total_paid: 0, invoices: [] } });
+    const year = new Date().getFullYear();
+    const r = await pool.query(`
+      SELECT i.id, i.invoice_number, i.title, i.amount, i.status, i.due_date,
+             COALESCE(i.issue_date, i.created_at) as date
+      FROM invoices i
+      WHERE i.company_id = $1 AND EXTRACT(year FROM COALESCE(i.issue_date, i.created_at)) = $2
+      ORDER BY i.created_at DESC
+    `, [companyId, year]);
+    const total_year = r.rows.reduce((s: number, x: any) => s + parseFloat(x.amount || 0), 0);
+    const total_paid = r.rows.filter((x: any) => x.status === 'paid').reduce((s: number, x: any) => s + parseFloat(x.amount || 0), 0);
+    res.json({ success: true, data: { total_year, total_paid, invoices: r.rows, year } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -4270,37 +4408,56 @@ app.patch('/api/invoices/:id/status', authenticateToken, authorizeRole('admin', 
 });
 
 // ─── Overdue Invoice Reminder (runs daily) ────────────────────────────────────
+const mahnungHtml = (level: number, inv: any, contact: any, daysOverdue: number) => {
+  const configs: Record<number, { title: string; color: string; intro: string; cta: string; warning?: string }> = {
+    1: { title: 'Zahlungserinnerung', color: '#f59e0b', intro: 'Wir möchten Sie freundlich darauf hinweisen, dass folgende Rechnung noch offen ist:', cta: 'Jetzt bezahlen →' },
+    2: { title: '1. Mahnung', color: '#f97316', intro: 'Trotz unserer Zahlungserinnerung ist folgende Rechnung noch immer unbezahlt. Wir bitten Sie dringend, den ausstehenden Betrag zu begleichen:', cta: 'Jetzt bezahlen →', warning: 'Bei weiterer Nichtzahlung sind wir gezwungen, rechtliche Schritte einzuleiten.' },
+    3: { title: '2. Mahnung – Letzte Mahnung', color: '#dc2626', intro: 'Wir haben Sie bereits zweimal auf die ausstehende Zahlung hingewiesen. Dies ist unsere letzte Zahlungsaufforderung:', cta: 'Sofort bezahlen →', warning: '⚠️ Bei Nichtbezahlung innerhalb von 5 Werktagen werden wir das Betreibungsverfahren einleiten und Ihnen die entstehenden Kosten in Rechnung stellen.' },
+  };
+  const c = configs[level] || configs[1];
+  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+    <div style="background:${c.color};padding:24px 32px"><h2 style="color:#fff;margin:0;font-size:18px">HED-IT · ${c.title}</h2></div>
+    <div style="padding:32px">
+      <p>Hallo ${contact.first_name || 'Kunde'},</p>
+      <p>${c.intro}</p>
+      <div style="background:#fef2f2;border-left:4px solid ${c.color};padding:16px;border-radius:4px;margin:16px 0">
+        <p style="margin:0;font-weight:700">${inv.title || inv.invoice_number}</p>
+        <p style="margin:4px 0 0;color:#64748b;font-size:13px">Betrag: <strong>CHF ${parseFloat(inv.amount).toFixed(2)}</strong> · Fällig seit: ${new Date(inv.due_date).toLocaleDateString('de-CH')} (${daysOverdue} Tage)</p>
+      </div>
+      ${c.warning ? `<div style="background:#fff7ed;border:1px solid #fed7aa;padding:12px 16px;border-radius:4px;color:#9a3412;font-size:13px;margin-bottom:16px">${c.warning}</div>` : ''}
+      <a href="https://portal.hed-it.ch/portal/invoices" style="display:inline-block;background:${c.color};color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">${c.cta}</a>
+      <p style="margin-top:24px;font-size:13px">Bei Fragen: <a href="mailto:info@hed-it.ch">info@hed-it.ch</a><br>Mit freundlichen Grüssen,<br>HED-IT Joel Hediger</p>
+    </div>
+  </div>`;
+};
+
+const MAHNUNG_DAYS = [1, 7, 14]; // days overdue → mahnung level 1, 2, 3
+
 const sendInvoiceReminders = async () => {
   if (!resendApiKey) return;
   try {
-    // 1 day BEFORE due: warn customer
+    // 1 day BEFORE due: reminder
     const soonDue = await pool.query(`
-      SELECT i.*, c.name as company_name
-      FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
-      WHERE i.status IN ('open','sent')
-        AND i.due_date = CURRENT_DATE + INTERVAL '1 day'
+      SELECT i.*, c.name as company_name FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
+      WHERE i.status IN ('open','sent') AND i.due_date = CURRENT_DATE + INTERVAL '1 day'
         AND (i.reminder_sent_before IS NULL OR i.reminder_sent_before = FALSE)
     `);
     for (const inv of soonDue.rows) {
-      const contact = await pool.query(
-        `SELECT email, first_name FROM contacts WHERE company_id=$1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`,
-        [inv.company_id]
-      );
+      const contact = await pool.query(`SELECT email, first_name FROM contacts WHERE company_id=$1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`, [inv.company_id]);
       if (contact.rows[0]?.email) {
         await resend.emails.send({
           from: EMAIL_NO_REPLY, to: contact.rows[0].email,
-          subject: `Zahlungserinnerung: ${inv.title || inv.invoice_number} fällig morgen`,
-          html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-            <div style="background:#1e3a5f;padding:28px 32px"><h2 style="color:#fff;margin:0">HED-IT · Zahlungserinnerung</h2></div>
+          subject: `Zahlungserinnerung: ${inv.title || inv.invoice_number} – fällig morgen`,
+          html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+            <div style="background:#1e3a5f;padding:24px 32px"><h2 style="color:#fff;margin:0;font-size:18px">HED-IT · Zahlungserinnerung</h2></div>
             <div style="padding:32px">
               <p>Hallo ${contact.rows[0].first_name || 'Kunde'},</p>
-              <p>Wir möchten Sie daran erinnern, dass folgende Rechnung <strong>morgen fällig</strong> ist:</p>
+              <p>Folgende Rechnung ist <strong>morgen fällig</strong>:</p>
               <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:16px;border-radius:4px;margin:16px 0">
                 <p style="margin:0;font-weight:700">${inv.title || inv.invoice_number}</p>
-                <p style="margin:4px 0 0;color:#64748b">Betrag: CHF ${parseFloat(inv.amount).toFixed(2)} · Fällig: ${new Date(inv.due_date).toLocaleDateString('de-CH')}</p>
+                <p style="margin:4px 0 0;color:#64748b;font-size:13px">CHF ${parseFloat(inv.amount).toFixed(2)} · Fällig: ${new Date(inv.due_date).toLocaleDateString('de-CH')}</p>
               </div>
               <a href="https://portal.hed-it.ch/portal/invoices" style="display:inline-block;background:#1e3a5f;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">Jetzt bezahlen →</a>
-              <p style="margin-top:24px">Mit freundlichen Grüssen,<br>HED-IT Joel Hediger</p>
             </div>
           </div>`
         }).catch(() => {});
@@ -4308,68 +4465,55 @@ const sendInvoiceReminders = async () => {
       }
     }
 
-    // 1 day AFTER due: overdue — email customer + admin + tool notification
-    const nowOverdue = await pool.query(`
-      SELECT i.*, c.name as company_name
-      FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
-      WHERE i.status IN ('open','sent')
-        AND i.due_date < CURRENT_DATE
-        AND (i.reminder_sent_overdue IS NULL OR i.reminder_sent_overdue = FALSE)
-    `);
-    for (const inv of nowOverdue.rows) {
-      const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
-      // Mark overdue
-      await pool.query(`UPDATE invoices SET status='overdue', reminder_sent_overdue=TRUE WHERE id=$1`, [inv.id]);
+    // Mahnung escalation: level 1 (+1d), level 2 (+7d), level 3 (+14d)
+    for (let level = 1; level <= 3; level++) {
+      const minDays = MAHNUNG_DAYS[level - 1];
+      const maxDays = level < 3 ? MAHNUNG_DAYS[level] - 1 : 9999;
+      const overdueInvoices = await pool.query(`
+        SELECT i.*, c.name as company_name FROM invoices i LEFT JOIN companies c ON i.company_id = c.id
+        WHERE i.status IN ('open','sent','overdue')
+          AND i.due_date < CURRENT_DATE
+          AND (CURRENT_DATE - i.due_date) >= $1
+          AND (CURRENT_DATE - i.due_date) <= $2
+          AND COALESCE(i.mahnung_level, 0) < $3
+      `, [minDays, maxDays, level]);
 
-      // Email to Joel (admin)
-      await resend.emails.send({
-        from: EMAIL_NO_REPLY, to: 'joel.hediger@hed-it.ch',
-        subject: `⚠️ Überfällige Rechnung: ${inv.title || inv.invoice_number} (${daysOverdue} Tag${daysOverdue !== 1 ? 'e' : ''})`,
-        html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-          <div style="background:#dc2626;padding:28px 32px"><h2 style="color:#fff;margin:0">HED-IT · Überfällige Rechnung</h2></div>
-          <div style="padding:32px">
-            <p>Folgende Rechnung ist <strong>${daysOverdue} Tag${daysOverdue !== 1 ? 'e' : ''} überfällig</strong>:</p>
-            <div style="background:#fef2f2;border-left:4px solid #dc2626;padding:16px;border-radius:4px;margin:16px 0">
-              <p style="margin:0;font-weight:700">${inv.title || inv.invoice_number}</p>
-              <p style="margin:4px 0 0;color:#64748b">Firma: ${inv.company_name || '-'} · Betrag: CHF ${parseFloat(inv.amount).toFixed(2)} · Fällig seit: ${new Date(inv.due_date).toLocaleDateString('de-CH')}</p>
-            </div>
-            <a href="https://hed-it.ch/accounting" style="display:inline-block;background:#dc2626;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">Im Tool ansehen →</a>
-          </div>
-        </div>`
-      }).catch(() => {});
+      for (const inv of overdueInvoices.rows) {
+        const daysOverdue = Math.floor((Date.now() - new Date(inv.due_date).getTime()) / 86400000);
+        await pool.query(`UPDATE invoices SET status='overdue', mahnung_level=$1, last_mahnung_at=NOW(), reminder_sent_overdue=TRUE WHERE id=$2`, [level, inv.id]);
 
-      // Tool notification for admin
-      await createNotification({
-        tenant_id: inv.tenant_id, target_role: 'admin', type: 'invoice',
-        entity_id: inv.id, title: 'Überfällige Rechnung',
-        message: `${inv.title || inv.invoice_number} (${inv.company_name || ''}) ist ${daysOverdue} Tag${daysOverdue !== 1 ? 'e' : ''} überfällig — CHF ${parseFloat(inv.amount).toFixed(2)}`,
-        link: '/accounting'
-      });
-
-      // Email to customer
-      const contact = await pool.query(
-        `SELECT email, first_name FROM contacts WHERE company_id=$1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`,
-        [inv.company_id]
-      );
-      if (contact.rows[0]?.email) {
+        // Admin notification + email
+        await createNotification({
+          tenant_id: inv.tenant_id, target_role: 'admin', type: 'invoice', entity_id: inv.id,
+          title: level === 1 ? 'Überfällige Rechnung' : `Mahnung ${level - 1} verschickt`,
+          message: `${inv.title || inv.invoice_number} (${inv.company_name || ''}) – CHF ${parseFloat(inv.amount).toFixed(2)} – ${daysOverdue} Tage überfällig`,
+          link: '/accounting'
+        });
+        const subjectAdmin = level === 1
+          ? `⚠️ Überfällig: ${inv.title || inv.invoice_number} (${daysOverdue}d)`
+          : `🔴 Mahnung ${level - 1} versandt: ${inv.title || inv.invoice_number}`;
         await resend.emails.send({
-          from: EMAIL_NO_REPLY, to: contact.rows[0].email,
-          subject: `Mahnung: Rechnung ${inv.invoice_number || ''} überfällig`,
-          html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto">
-            <div style="background:#dc2626;padding:28px 32px"><h2 style="color:#fff;margin:0">HED-IT · Mahnung</h2></div>
-            <div style="padding:32px">
-              <p>Hallo ${contact.rows[0].first_name || 'Kunde'},</p>
-              <p>Folgende Rechnung ist <strong>seit ${daysOverdue} Tag${daysOverdue !== 1 ? 'en' : ''} überfällig</strong> und noch nicht bezahlt:</p>
-              <div style="background:#fef2f2;border-left:4px solid #dc2626;padding:16px;border-radius:4px;margin:16px 0">
-                <p style="margin:0;font-weight:700">${inv.title || inv.invoice_number}</p>
-                <p style="margin:4px 0 0;color:#64748b">Betrag: CHF ${parseFloat(inv.amount).toFixed(2)} · Fällig seit: ${new Date(inv.due_date).toLocaleDateString('de-CH')}</p>
-              </div>
-              <p>Bitte begleichen Sie den offenen Betrag so schnell wie möglich.</p>
-              <a href="https://portal.hed-it.ch/portal/invoices" style="display:inline-block;background:#dc2626;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:700">Jetzt bezahlen →</a>
-              <p style="margin-top:24px">Bei Fragen: <a href="mailto:info@hed-it.ch">info@hed-it.ch</a><br>Mit freundlichen Grüssen,<br>HED-IT Joel Hediger</p>
-            </div>
+          from: EMAIL_NO_REPLY, to: 'joel.hediger@hed-it.ch', subject: subjectAdmin,
+          html: `<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">
+            <h3 style="color:#dc2626">Mahnung Stufe ${level}: ${inv.title || inv.invoice_number}</h3>
+            <p>Firma: <strong>${inv.company_name || '–'}</strong><br>
+            Betrag: <strong>CHF ${parseFloat(inv.amount).toFixed(2)}</strong><br>
+            Fällig seit: ${new Date(inv.due_date).toLocaleDateString('de-CH')} (${daysOverdue} Tage)<br>
+            Mahnung-Stufe: ${level}</p>
+            <a href="https://hed-it.ch/accounting" style="display:inline-block;background:#dc2626;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:700">Im Tool ansehen →</a>
           </div>`
         }).catch(() => {});
+
+        // Customer email
+        const contact = await pool.query(`SELECT email, first_name FROM contacts WHERE company_id=$1 AND email IS NOT NULL ORDER BY is_primary DESC LIMIT 1`, [inv.company_id]);
+        if (contact.rows[0]?.email) {
+          const subjectMap = ['', 'Zahlungserinnerung', '1. Mahnung', '2. Mahnung – Letzte Zahlungsaufforderung'];
+          await resend.emails.send({
+            from: EMAIL_NO_REPLY, to: contact.rows[0].email,
+            subject: `${subjectMap[level]}: ${inv.title || inv.invoice_number}`,
+            html: mahnungHtml(level, inv, contact.rows[0], daysOverdue)
+          }).catch(() => {});
+        }
       }
     }
   } catch (err) {
