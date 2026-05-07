@@ -268,6 +268,41 @@ async function initDatabase() {
         AND (c.first_name = '' OR c.first_name IS NULL OR c.last_name = '' OR c.last_name IS NULL)
     `).catch((err: any) => console.log('[INFO] Contact backfill skipped:', err.message));
 
+    // 7. Proposals table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS proposals (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID,
+        company_id UUID,
+        proposal_number TEXT,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'draft',
+        items JSONB DEFAULT '[]',
+        subtotal DECIMAL(12,2) DEFAULT 0,
+        tax_total DECIMAL(12,2) DEFAULT 0,
+        discount_percent DECIMAL(5,2) DEFAULT 0,
+        total DECIMAL(12,2) DEFAULT 0,
+        notes TEXT,
+        valid_until DATE,
+        signed_at TIMESTAMP,
+        signature_data TEXT,
+        rejected_at TIMESTAMP,
+        rejected_reason TEXT,
+        contract_id UUID,
+        created_by UUID,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `).catch(() => {});
+
+    // 8. Invoice & contract additions for proposal workflow
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_interval TEXT DEFAULT \'one_time\'').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS is_recurring BOOLEAN DEFAULT FALSE').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS items JSONB').catch(() => {});
+    await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS proposal_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS proposal_id UUID').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS next_invoice_date DATE').catch(() => {});
+
     console.log('[INFO] Database initialization complete.');
   } catch (err) {
     console.error('[CRITICAL] initDatabase failed:', err);
@@ -4202,6 +4237,263 @@ const sendContractExpiryWarnings = async () => {
 // Run contract expiry check daily at startup and every 24h
 setInterval(sendContractExpiryWarnings, 24 * 60 * 60 * 1000);
 sendContractExpiryWarnings();
+
+// ─── Proposals (Offerten) ─────────────────────────────────────────────────────
+
+// Helper: create invoices from proposal items grouped by billing_interval
+async function createInvoicesFromProposal(proposal: any, contractId: string): Promise<void> {
+  const items: any[] = typeof proposal.items === 'string' ? JSON.parse(proposal.items) : (proposal.items || []);
+  const groups: Record<string, any[]> = {};
+  for (const item of items) {
+    const interval = item.billing_interval || 'one_time';
+    if (!groups[interval]) groups[interval] = [];
+    groups[interval].push(item);
+  }
+
+  const intervalLabel = (i: string) =>
+    i === 'monthly' ? 'Monatlich' : i === 'quarterly' ? 'Quartalsweise' : i === 'yearly' ? 'Jährlich' : 'Einmalig';
+  const nextDate = (i: string) => {
+    const d = new Date();
+    if (i === 'monthly') d.setMonth(d.getMonth() + 1);
+    else if (i === 'quarterly') d.setMonth(d.getMonth() + 3);
+    else if (i === 'yearly') d.setFullYear(d.getFullYear() + 1);
+    return d;
+  };
+
+  for (const [interval, grpItems] of Object.entries(groups)) {
+    const subtotal = grpItems.reduce((s, i) => s + (parseFloat(i.total_price) || 0), 0);
+    const taxTotal = grpItems.reduce((s, i) => s + (parseFloat(i.total_price) || 0) * ((parseFloat(i.tax_rate) || 8.1) / 100), 0);
+    const total = subtotal + taxTotal;
+    const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
+    const invNum = `RE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+    await pool.query(
+      `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, amount, status, issue_date, due_date, contract_id, proposal_id, billing_interval, is_recurring, items, tax_rate)
+       VALUES ($1,$2,$3,$4,$5,'sent',NOW(),$6,$7,$8,$9,$10,$11,8.1)`,
+      [proposal.tenant_id, proposal.company_id, invNum,
+       `${proposal.title} – ${intervalLabel(interval)}`,
+       total.toFixed(2), dueDate, contractId, proposal.id,
+       interval, interval !== 'one_time', JSON.stringify(grpItems)]
+    );
+    // Update contract next_invoice_date for recurring
+    if (interval !== 'one_time') {
+      await pool.query(
+        `UPDATE contracts SET next_invoice_date = $1 WHERE id = $2`,
+        [nextDate(interval).toISOString().split('T')[0], contractId]
+      ).catch(() => {});
+    }
+  }
+}
+
+// Cron: generate recurring invoices when due
+async function generateRecurringInvoices() {
+  try {
+    const contracts = await pool.query(
+      `SELECT * FROM contracts WHERE next_invoice_date <= CURRENT_DATE AND status = 'active'`
+    );
+    for (const contract of contracts.rows) {
+      const lastInv = await pool.query(
+        `SELECT * FROM invoices WHERE contract_id = $1 AND billing_interval != 'one_time' ORDER BY created_at DESC LIMIT 1`,
+        [contract.id]
+      );
+      if (!lastInv.rows[0]) continue;
+      const src = lastInv.rows[0];
+      const invNum = `RE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+      const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
+      await pool.query(
+        `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, amount, status, issue_date, due_date, contract_id, proposal_id, billing_interval, is_recurring, items, tax_rate)
+         VALUES ($1,$2,$3,$4,$5,'sent',NOW(),$6,$7,$8,$9,$10,$11,$12)`,
+        [src.tenant_id, src.company_id, invNum, src.title, src.amount, dueDate,
+         src.contract_id, src.proposal_id, src.billing_interval, true, src.items, src.tax_rate]
+      );
+      // Advance next_invoice_date
+      const next = new Date();
+      if (contract.billing_interval === 'monthly' || src.billing_interval === 'monthly') next.setMonth(next.getMonth() + 1);
+      else if (contract.billing_interval === 'quarterly' || src.billing_interval === 'quarterly') next.setMonth(next.getMonth() + 3);
+      else if (contract.billing_interval === 'yearly' || src.billing_interval === 'yearly') next.setFullYear(next.getFullYear() + 1);
+      await pool.query(`UPDATE contracts SET next_invoice_date = $1 WHERE id = $2`, [next.toISOString().split('T')[0], contract.id]);
+      console.log(`[Recurring] Created invoice for contract ${contract.id}`);
+    }
+  } catch (err) { console.error('[Recurring invoice cron error]', err); }
+}
+setInterval(generateRecurringInvoices, 24 * 60 * 60 * 1000);
+setTimeout(generateRecurringInvoices, 10000); // run 10s after startup
+
+// GET /api/proposals — admin list
+app.get('/api/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const r = await pool.query(
+      `SELECT p.*, c.name as company_name FROM proposals p LEFT JOIN companies c ON p.company_id = c.id WHERE p.tenant_id = $1 ORDER BY p.created_at DESC`,
+      [req.user!.tenant_id]
+    );
+    res.json({ success: true, data: r.rows });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// POST /api/proposals — create
+app.post('/api/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, company_id, items, discount_percent, notes, valid_until } = req.body;
+  try {
+    const itemsArr: any[] = items || [];
+    const subtotal = itemsArr.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0), 0);
+    const taxTotal = itemsArr.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0) * ((parseFloat(i.tax_rate) || 8.1) / 100), 0);
+    const disc = parseFloat(discount_percent) || 0;
+    const discAmt = subtotal * (disc / 100);
+    const total = (subtotal - discAmt) + taxTotal;
+    const propNum = `OFF-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+    const r = await pool.query(
+      `INSERT INTO proposals (tenant_id, company_id, proposal_number, title, status, items, subtotal, tax_total, discount_percent, total, notes, valid_until, created_by)
+       VALUES ($1,$2,$3,$4,'draft',$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [req.user!.tenant_id, company_id, propNum, title, JSON.stringify(itemsArr),
+       subtotal.toFixed(2), taxTotal.toFixed(2), disc, total.toFixed(2),
+       notes || null, valid_until || null, req.user!.id]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// PATCH /api/proposals/:id — update draft
+app.patch('/api/proposals/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { title, company_id, items, discount_percent, notes, valid_until, status } = req.body;
+  try {
+    const itemsArr: any[] = items || [];
+    const subtotal = itemsArr.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0), 0);
+    const taxTotal = itemsArr.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0) * ((parseFloat(i.tax_rate) || 8.1) / 100), 0);
+    const disc = parseFloat(discount_percent) || 0;
+    const total = (subtotal - subtotal * disc / 100) + taxTotal;
+    const r = await pool.query(
+      `UPDATE proposals SET title=$1, company_id=$2, items=$3, subtotal=$4, tax_total=$5, discount_percent=$6, total=$7, notes=$8, valid_until=$9, status=COALESCE($10,status), updated_at=NOW() WHERE id=$11 AND tenant_id=$12 RETURNING *`,
+      [title, company_id, JSON.stringify(itemsArr), subtotal.toFixed(2), taxTotal.toFixed(2), disc, total.toFixed(2), notes || null, valid_until || null, status || null, req.params.id, req.user!.tenant_id]
+    );
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// DELETE /api/proposals/:id
+app.delete('/api/proposals/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    await pool.query(`DELETE FROM proposals WHERE id=$1 AND tenant_id=$2`, [req.params.id, req.user!.tenant_id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// POST /api/proposals/:id/send — mark sent + email customer
+app.post('/api/proposals/:id/send', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const r = await pool.query(
+      `UPDATE proposals SET status='sent', updated_at=NOW() WHERE id=$1 AND tenant_id=$2 RETURNING *`,
+      [req.params.id, req.user!.tenant_id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ success: false });
+    const proposal = r.rows[0];
+    // Email customer
+    const contactRes = await pool.query(
+      `SELECT email, first_name FROM contacts WHERE company_id=$1 AND email IS NOT NULL AND email != '' ORDER BY is_primary DESC LIMIT 1`,
+      [proposal.company_id]
+    );
+    const email = contactRes.rows[0]?.email;
+    if (email && resendApiKey) {
+      await resend.emails.send({
+        from: EMAIL_NO_REPLY, to: email,
+        subject: `Neue Offerte: ${proposal.title}`,
+        html: `<p>Hallo ${contactRes.rows[0]?.first_name || ''},</p>
+          <p>Sie haben eine neue Offerte erhalten: <strong>${proposal.title}</strong> (${proposal.proposal_number})</p>
+          <p>Betrag: <strong>CHF ${parseFloat(proposal.total).toFixed(2)}</strong></p>
+          <p>Bitte melden Sie sich im Kundenportal an, um die Offerte zu prüfen und zu unterzeichnen.</p>
+          <br><p>Mit freundlichen Grüssen,<br>HED-IT Joel Hediger</p>`,
+      }).catch(() => {});
+    }
+    res.json({ success: true, data: proposal });
+  } catch (err: any) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+// GET /api/portal/proposals — customer portal list
+app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
+    const companyId = userRow.rows[0]?.company_id;
+    if (!companyId) return res.json({ success: true, data: [] });
+    const r = await pool.query(
+      `SELECT p.*, c.name as company_name FROM proposals p LEFT JOIN companies c ON p.company_id=c.id WHERE p.company_id=$1 AND p.status IN ('sent','accepted','rejected','converted') ORDER BY p.created_at DESC`,
+      [companyId]
+    );
+    res.json({ success: true, data: r.rows });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// GET /api/portal/proposals/:id
+app.get('/api/portal/proposals/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
+    const companyId = userRow.rows[0]?.company_id;
+    const r = await pool.query(
+      `SELECT p.*, c.name as company_name FROM proposals p LEFT JOIN companies c ON p.company_id=c.id WHERE p.id=$1 AND p.company_id=$2`,
+      [req.params.id, companyId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ success: false });
+    res.json({ success: true, data: r.rows[0] });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// POST /api/portal/proposals/:id/sign — customer signs → creates contract + invoices
+app.post('/api/portal/proposals/:id/sign', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { signatureData } = req.body;
+  try {
+    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
+    const companyId = userRow.rows[0]?.company_id;
+    const propRes = await pool.query(`SELECT * FROM proposals WHERE id=$1 AND company_id=$2`, [req.params.id, companyId]);
+    if (propRes.rowCount === 0) return res.status(404).json({ success: false });
+    const proposal = propRes.rows[0];
+    if (proposal.status === 'converted') return res.status(400).json({ success: false, error: 'Already signed' });
+
+    // 1. Create contract
+    const contractNum = `CON-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+    const contractRes = await pool.query(
+      `INSERT INTO contracts (tenant_id, company_id, title, contract_number, amount, billing_interval, status, signature_data, signature_date, proposal_id, items, discount_percent, notes, start_date)
+       VALUES ($1,$2,$3,$4,$5,'mixed','active',$6,NOW(),$7,$8,$9,$10,CURRENT_DATE) RETURNING *`,
+      [proposal.tenant_id, proposal.company_id, proposal.title, contractNum,
+       proposal.total, signatureData || null, proposal.id,
+       proposal.items, proposal.discount_percent, proposal.notes || null]
+    );
+    const contract = contractRes.rows[0];
+
+    // 2. Create invoices per billing interval group
+    await createInvoicesFromProposal(proposal, contract.id);
+
+    // 3. Mark proposal converted
+    await pool.query(
+      `UPDATE proposals SET status='converted', signed_at=NOW(), signature_data=$1, contract_id=$2, updated_at=NOW() WHERE id=$3`,
+      [signatureData || null, contract.id, proposal.id]
+    );
+
+    // 4. Notify admin
+    await createNotification({
+      tenant_id: proposal.tenant_id, target_role: 'admin', type: 'contract',
+      entity_id: contract.id, title: 'Offerte signiert',
+      message: `Die Offerte "${proposal.title}" wurde signiert. Vertrag & Rechnungen wurden erstellt.`,
+      link: `/contracts`
+    });
+
+    res.json({ success: true, contract_id: contract.id });
+  } catch (err: any) {
+    console.error('Proposal sign error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/portal/proposals/:id/reject
+app.post('/api/portal/proposals/:id/reject', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  const { reason } = req.body;
+  try {
+    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
+    const companyId = userRow.rows[0]?.company_id;
+    const r = await pool.query(
+      `UPDATE proposals SET status='rejected', rejected_at=NOW(), rejected_reason=$1, updated_at=NOW() WHERE id=$2 AND company_id=$3 RETURNING *`,
+      [reason || null, req.params.id, companyId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ success: false });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
 
 // ─── Stripe Routes ────────────────────────────────────────────────────────────
 

@@ -12,7 +12,16 @@ export interface LineItem {
   unit_price: number;
   tax_rate: number;
   total_price: number;
+  billing_interval?: string;
+  is_recurring?: boolean;
 }
+
+const BILLING_INTERVALS = [
+  { value: 'one_time', label: 'Einmalig' },
+  { value: 'monthly', label: 'Monatlich' },
+  { value: 'quarterly', label: 'Quartalsweise' },
+  { value: 'yearly', label: 'Jährlich' },
+];
 
 interface LineItemEditorProps {
   items: LineItem[];
@@ -38,7 +47,7 @@ export const LineItemEditor = ({ items, onChange, discountPercent = 0 }: LineIte
   }, []);
 
   const addItem = () => {
-    onChange([...items, { title: '', quantity: 1, unit_price: 0, tax_rate: 8.1, total_price: 0 }]);
+    onChange([...items, { title: '', quantity: 1, unit_price: 0, tax_rate: 8.1, total_price: 0, billing_interval: 'one_time', is_recurring: false }]);
   };
 
   const removeItem = (index: number) => {
@@ -56,12 +65,17 @@ export const LineItemEditor = ({ items, onChange, discountPercent = 0 }: LineIte
   };
 
   const selectProduct = (index: number, product: Product) => {
+    const interval = (product as any).is_recurring
+      ? ((product as any).unit === 'Monat' ? 'monthly' : (product as any).unit === 'Jahr' ? 'yearly' : 'monthly')
+      : 'one_time';
     updateItem(index, {
       product_id: product.id,
       title: product.name,
       unit_price: parseFloat(product.price || '0'),
       tax_rate: parseFloat(product.tax_rate || '8.1'),
       description: product.description || '',
+      billing_interval: interval,
+      is_recurring: !!(product as any).is_recurring,
     });
     setShowProductPicker(null);
     setSearch('');
@@ -81,10 +95,11 @@ export const LineItemEditor = ({ items, onChange, discountPercent = 0 }: LineIte
 
   return (
     <div className="line-item-editor">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 120px 40px', gap: 12, marginBottom: 8, padding: '0 8px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 110px 130px 110px 40px', gap: 12, marginBottom: 8, padding: '0 8px' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Position / Produkt</span>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Menge</span>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Preis (Netto)</span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Abrechnung</span>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', textAlign: 'right' }}>Total</span>
         <span />
       </div>
@@ -92,7 +107,7 @@ export const LineItemEditor = ({ items, onChange, discountPercent = 0 }: LineIte
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {items.map((item, index) => (
           <div key={index} style={{ position: 'relative' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px 120px 40px', gap: 12, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 110px 130px 110px 40px', gap: 12, alignItems: 'start' }}>
               <div style={{ position: 'relative' }}>
                 <input
                   type="text"
@@ -171,6 +186,14 @@ export const LineItemEditor = ({ items, onChange, discountPercent = 0 }: LineIte
                 step="0.05"
                 onChange={(e) => updateItem(index, { unit_price: parseFloat(e.target.value) || 0 })}
               />
+              <select
+                className="input-field"
+                value={item.billing_interval || 'one_time'}
+                onChange={(e) => updateItem(index, { billing_interval: e.target.value, is_recurring: e.target.value !== 'one_time' })}
+                style={{ fontSize: 13 }}
+              >
+                {BILLING_INTERVALS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
+              </select>
               <div style={{ padding: '10px 0', textAlign: 'right', fontWeight: 600, fontSize: 14 }}>
                 {(item.total_price || 0).toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
