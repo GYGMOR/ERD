@@ -4520,12 +4520,15 @@ app.post('/api/portal/proposals/:id/sign', authenticateToken, async (req: Authen
 
     // 1. Create contract
     const contractNum = `CON-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
+    const proposalItems = typeof proposal.items === 'string'
+      ? JSON.parse(proposal.items || '[]')
+      : (proposal.items || []);
     const contractRes = await pool.query(
       `INSERT INTO contracts (tenant_id, company_id, title, contract_number, amount, billing_interval, status, signature_data, signature_date, proposal_id, items, discount_percent, notes, start_date)
        VALUES ($1,$2,$3,$4,$5,'mixed','active',$6,NOW(),$7,$8,$9,$10,CURRENT_DATE) RETURNING *`,
       [proposal.tenant_id, proposal.company_id, proposal.title, contractNum,
        proposal.total, signatureData || null, proposal.id,
-       proposal.items, proposal.discount_percent, proposal.notes || null]
+       JSON.stringify(proposalItems), proposal.discount_percent, proposal.notes || null]
     );
     const contract = contractRes.rows[0];
 
