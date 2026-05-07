@@ -14,7 +14,7 @@ import { generateSecret, generateURI, verify } from 'otplib';
 import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1666,7 +1666,7 @@ app.get('/api/invoices/:id/pdf', authenticateToken, async (req: AuthenticatedReq
     doc.text(invoice.company_name, 20, 76);
     
     // Table
-    (doc as any).autoTable({
+    autoTable(doc as any, {
       startY: 90,
       head: [['Beschreibung', 'Betrag']],
       body: [[invoice.title, `CHF ${parseFloat(invoice.amount).toFixed(2)}`]],
@@ -3463,7 +3463,7 @@ app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: Authenti
       ...(contract.discount_percent > 0 ? [['Rabatt', `${contract.discount_percent}%`]] : []),
     ];
 
-    doc.autoTable({
+    autoTable(doc as any, {
       startY: 105,
       body: details,
       theme: 'plain',
@@ -3477,7 +3477,7 @@ app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: Authenti
       ? (typeof contract.items === 'string' ? JSON.parse(contract.items) : contract.items)
       : [];
 
-    const afterDetails = doc.lastAutoTable.finalY + 10;
+    const afterDetails = (doc as any).lastAutoTable.finalY + 10;
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(30, 41, 59);
@@ -3506,7 +3506,7 @@ app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: Authenti
     footRows.push(['', '', '', '', 'MwSt (8.1%):', `CHF ${tax.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
     footRows.push(['', '', '', '', 'GESAMTBETRAG:', `CHF ${total.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
 
-    doc.autoTable({
+    autoTable(doc as any, {
       startY: afterDetails + 4,
       head: [['Position', 'Beschreibung', 'Menge', 'Einzelpreis', 'MwSt', 'Total']],
       body: tableRows,
@@ -3527,7 +3527,7 @@ app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: Authenti
     });
 
     // ─── Bemerkungen ──────────────────────────────────────────────────────────
-    let afterTable = doc.lastAutoTable.finalY + 10;
+    let afterTable = (doc as any).lastAutoTable.finalY + 10;
     if (contract.notes) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9);
