@@ -321,6 +321,10 @@ async function initDatabase() {
     await pool.query('ALTER TABLE invoices ADD COLUMN IF NOT EXISTS proposal_id UUID').catch(() => {});
     await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS proposal_id UUID').catch(() => {});
     await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS next_invoice_date DATE').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS billing_interval TEXT DEFAULT \'one_time\'').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS notes TEXT').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS start_date DATE').catch(() => {});
+    await pool.query('ALTER TABLE contracts ADD COLUMN IF NOT EXISTS end_date DATE').catch(() => {});
 
     console.log('[INFO] Database initialization complete.');
   } catch (err) {
