@@ -2942,9 +2942,22 @@ app.patch('/api/calendar/events/:id/rsvp', authenticateToken, async (req: Authen
 // --- CUSTOMER PORTAL API ---
 
 // Helper to get company_id for a user
-const getCompanyId = async (userId: string) => {
-  const result = await pool.query('SELECT company_id FROM contacts WHERE user_id = $1', [userId]);
-  return result.rows[0]?.company_id;
+const getCompanyId = async (userId: string): Promise<string | null> => {
+  // 1. users.company_id (direct link)
+  const userRow = await pool.query('SELECT company_id, email FROM users WHERE id=$1', [userId]);
+  if (userRow.rows[0]?.company_id) return userRow.rows[0].company_id;
+
+  // 2. contacts.user_id
+  const contactRow = await pool.query('SELECT company_id FROM contacts WHERE user_id=$1 AND company_id IS NOT NULL LIMIT 1', [userId]);
+  if (contactRow.rows[0]?.company_id) return contactRow.rows[0].company_id;
+
+  // 3. match by email (fallback for accounts not yet linked)
+  const email = userRow.rows[0]?.email;
+  if (email) {
+    const emailRow = await pool.query('SELECT company_id FROM contacts WHERE email=$1 AND company_id IS NOT NULL LIMIT 1', [email]);
+    if (emailRow.rows[0]?.company_id) return emailRow.rows[0].company_id;
+  }
+  return null;
 };
 
 app.get('/api/portal/dashboard', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
@@ -4419,8 +4432,7 @@ app.post('/api/proposals/:id/send', authenticateToken, async (req: Authenticated
 // GET /api/portal/proposals — customer portal list (includes legacy INV- invoice quotes)
 app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
-    const companyId = userRow.rows[0]?.company_id;
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
     if (!companyId) return res.json({ success: true, data: [] });
 
     const [propsRes, legacyRes] = await Promise.all([
@@ -4463,8 +4475,7 @@ app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedReq
 // GET /api/portal/proposals/:id
 app.get('/api/portal/proposals/:id', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
-    const companyId = userRow.rows[0]?.company_id;
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
     const r = await pool.query(
       `SELECT p.*, c.name as company_name FROM proposals p LEFT JOIN companies c ON p.company_id=c.id WHERE p.id=$1 AND p.company_id=$2`,
       [req.params.id, companyId]
@@ -4478,8 +4489,7 @@ app.get('/api/portal/proposals/:id', authenticateToken, async (req: Authenticate
 app.post('/api/portal/proposals/:id/sign', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { signatureData } = req.body;
   try {
-    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
-    const companyId = userRow.rows[0]?.company_id;
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
     const propRes = await pool.query(`SELECT * FROM proposals WHERE id=$1 AND company_id=$2`, [req.params.id, companyId]);
     if (propRes.rowCount === 0) return res.status(404).json({ success: false });
     const proposal = propRes.rows[0];
@@ -4524,8 +4534,7 @@ app.post('/api/portal/proposals/:id/sign', authenticateToken, async (req: Authen
 app.post('/api/portal/proposals/:id/reject', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   const { reason } = req.body;
   try {
-    const userRow = await pool.query('SELECT company_id FROM users WHERE id=$1', [req.user!.id]);
-    const companyId = userRow.rows[0]?.company_id;
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
     const r = await pool.query(
       `UPDATE proposals SET status='rejected', rejected_at=NOW(), rejected_reason=$1, updated_at=NOW() WHERE id=$2 AND company_id=$3 RETURNING *`,
       [reason || null, req.params.id, companyId]

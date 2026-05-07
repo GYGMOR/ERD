@@ -46,6 +46,7 @@ const NewProposalModal = ({ onClose, onSave }: { onClose: () => void; onSave: ()
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [sendNow, setSendNow] = useState(true);
 
   useEffect(() => {
     const token = getToken();
@@ -65,8 +66,15 @@ const NewProposalModal = ({ onClose, onSave }: { onClose: () => void; onSave: ()
         body: JSON.stringify({ ...form, items, tenant_id: getTenantId() }),
       });
       const data = await res.json();
-      if (data.success) onSave();
-      else setError(data.error || 'Fehler beim Erstellen.');
+      if (data.success) {
+        if (sendNow && data.data?.id) {
+          await fetch(`/api/proposals/${data.data.id}/send`, {
+            method: 'POST',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          });
+        }
+        onSave();
+      } else setError(data.error || 'Fehler beim Erstellen.');
     } catch { setError('Netzwerkfehler.'); } finally { setLoading(false); }
   };
 
@@ -115,11 +123,26 @@ const NewProposalModal = ({ onClose, onSave }: { onClose: () => void; onSave: ()
             <textarea className="input-field" style={{ width: '100%', minHeight: 80, resize: 'vertical' }} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Optionale Hinweise für den Kunden..." />
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, paddingTop: 8, borderTop: '1px solid var(--color-border)' }}>
-            <button type="button" onClick={onClose} style={{ padding: '10px 20px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', cursor: 'pointer', fontWeight: 600 }}>Abbrechen</button>
-            <button type="submit" disabled={loading} className="btn-primary" style={{ padding: '10px 24px', gap: 8, display: 'flex', alignItems: 'center' }}>
-              {loading ? 'Erstellen...' : <><Plus size={16} /> Offerte erstellen</>}
-            </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 8, borderTop: '1px solid var(--color-border)' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={sendNow}
+                onChange={e => setSendNow(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: 14, fontWeight: 600 }}>
+                <Send size={14} style={{ display: 'inline', marginRight: 5, verticalAlign: 'middle' }} />
+                Direkt an Kunden senden
+              </span>
+              <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>(Status → Gesendet, erscheint im Portal)</span>
+            </label>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button type="button" onClick={onClose} style={{ padding: '10px 20px', borderRadius: 6, border: '1px solid var(--color-border)', background: 'transparent', cursor: 'pointer', fontWeight: 600 }}>Abbrechen</button>
+              <button type="submit" disabled={loading} className="btn-primary" style={{ padding: '10px 24px', gap: 8, display: 'flex', alignItems: 'center' }}>
+                {loading ? 'Erstellen...' : sendNow ? <><Send size={16} /> Erstellen & Senden</> : <><Plus size={16} /> Als Entwurf speichern</>}
+              </button>
+            </div>
           </div>
         </form>
       </div>
