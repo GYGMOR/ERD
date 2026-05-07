@@ -4464,9 +4464,9 @@ app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedReq
            ROUND((i.amount / 1.081)::numeric, 2) as subtotal,
            ROUND((i.amount - i.amount / 1.081)::numeric, 2) as tax_total,
            0 as discount_percent,
-           i.notes,
+           NULL as notes,
            i.due_date as valid_until,
-           i.items,
+           NULL::jsonb as items,
            i.created_at,
            NULL as signed_at,
            co.name as company_name,
@@ -4484,7 +4484,10 @@ app.get('/api/portal/proposals', authenticateToken, async (req: AuthenticatedReq
       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
     res.json({ success: true, data: all });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err: any) {
+    console.error('GET /api/portal/proposals error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // GET /api/portal/proposals/:id
@@ -4599,8 +4602,8 @@ app.post('/api/stripe/payment-intent', authenticateToken, async (req: Authentica
     await pool.query('UPDATE invoices SET stripe_payment_intent_id = $1 WHERE id = $2', [pi.id, invoice.id]);
     res.json({ client_secret: pi.client_secret });
   } catch (err: any) {
-    console.error('Stripe payment-intent error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Stripe payment-intent error:', err?.message || err);
+    res.status(500).json({ error: err?.message || 'Stripe-Fehler beim Erstellen der Zahlung' });
   }
 });
 
@@ -4608,8 +4611,7 @@ app.post('/api/stripe/payment-intent', authenticateToken, async (req: Authentica
 app.get('/api/stripe/payment-methods', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   if (!stripe) return res.status(503).json({ error: 'Payments not configured yet.' });
   try {
-    const userRow = await pool.query('SELECT company_id FROM users WHERE id = $1', [req.user!.id]);
-    const companyId = userRow.rows[0]?.company_id;
+    const companyId = req.user!.company_id || await getCompanyId(req.user!.id);
     if (!companyId) return res.json({ data: [] });
     const comp = await pool.query('SELECT stripe_customer_id FROM companies WHERE id = $1', [companyId]);
     const customerId = comp.rows[0]?.stripe_customer_id;
