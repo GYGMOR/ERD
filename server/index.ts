@@ -3911,17 +3911,19 @@ app.post('/api/tickets/:id/approve-upgrade', authenticateToken, authorizeRole('a
         if (isMonthly) {
             // Create new contract for recurring monthly costs
             await pool.query(
-                `INSERT INTO contracts (tenant_id, company_id, service_name, type, status, start_date, monthly_price, payment_cycle)
-                 VALUES ($1, $2, $3, $4, 'active', NOW(), $5, 'monthly')`,
-                [ticket.tenant_id, ticket.company_id, service_name, 'service', price]
+                `INSERT INTO contracts (tenant_id, company_id, title, status, billing_interval, amount, start_date)
+                 VALUES ($1, $2, $3, 'active', 'monthly', $4, NOW())`,
+                [ticket.tenant_id, ticket.company_id, service_name, price]
             );
         } else {
             // For one-time costs, generate an immediate invoice
-            const invNumber = 'INV-' + Math.floor(Math.random() * 1000000);
+            const year = new Date().getFullYear();
+            const invSeq = await pool.query("SELECT nextval('invoice_number_seq') as seq");
+            const invNumber = `RE-${year}-${String(invSeq.rows[0]?.seq || Math.floor(Math.random() * 99999)).padStart(5, '0')}`;
             await pool.query(
-                `INSERT INTO invoices (company_id, invoice_number, status, amount, issue_date, due_date)
-                 VALUES ($1, $2, 'draft', $3, NOW(), NOW() + interval '30 days')`,
-                [ticket.company_id, invNumber, price]
+                `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, status, amount, issue_date, due_date)
+                 VALUES ($1, $2, $3, $4, 'sent', $5, NOW(), NOW() + interval '30 days')`,
+                [ticket.tenant_id, ticket.company_id, invNumber, service_name, price]
             );
         }
 
