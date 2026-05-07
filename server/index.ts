@@ -243,6 +243,24 @@ async function initDatabase() {
     await pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP').catch(() => {});
     await pool.query('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_role VARCHAR(50)').catch(() => {});
     await pool.query('ALTER TABLE ticket_messages ADD COLUMN IF NOT EXISTS attachment_url TEXT, ADD COLUMN IF NOT EXISTS attachment_name TEXT').catch(() => {});
+    // Products table (may not exist in older deployments)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS products (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        tenant_id UUID,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        price DECIMAL(12,2) DEFAULT 0,
+        unit VARCHAR(50) DEFAULT 'Stück',
+        category VARCHAR(100),
+        tax_rate DECIMAL(5,2) DEFAULT 8.1,
+        is_recurring BOOLEAN DEFAULT FALSE,
+        is_active BOOLEAN DEFAULT TRUE,
+        is_folder BOOLEAN DEFAULT FALSE,
+        parent_id UUID,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `).catch(() => {});
     await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS is_folder BOOLEAN DEFAULT false').catch(() => {});
     await pool.query('ALTER TABLE products ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES products(id) ON DELETE CASCADE').catch(() => {});
 
@@ -1812,7 +1830,7 @@ app.post('/api/invoices', async (req: express.Request, res: express.Response) =>
     const result = await pool.query(
       `INSERT INTO invoices (tenant_id, company_id, title, amount, status, due_date)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tenant_id, company_id || null, title, amount || 0, status || 'draft', due_date]
+      [tenant_id, company_id || null, title, amount || 0, status || 'draft', due_date || null]
     );
 
     // Notification for new invoice/quote
@@ -2943,15 +2961,12 @@ app.patch('/api/calendar/events/:id/rsvp', authenticateToken, async (req: Authen
 
 // Helper to get company_id for a user
 const getCompanyId = async (userId: string): Promise<string | null> => {
-  // 1. users.company_id (direct link)
-  const userRow = await pool.query('SELECT company_id, email FROM users WHERE id=$1', [userId]);
-  if (userRow.rows[0]?.company_id) return userRow.rows[0].company_id;
-
-  // 2. contacts.user_id
+  // 1. contacts.user_id
   const contactRow = await pool.query('SELECT company_id FROM contacts WHERE user_id=$1 AND company_id IS NOT NULL LIMIT 1', [userId]);
   if (contactRow.rows[0]?.company_id) return contactRow.rows[0].company_id;
 
-  // 3. match by email (fallback for accounts not yet linked)
+  // 2. match by email (fallback for accounts not yet linked to a contact)
+  const userRow = await pool.query('SELECT email FROM users WHERE id=$1', [userId]);
   const email = userRow.rows[0]?.email;
   if (email) {
     const emailRow = await pool.query('SELECT company_id FROM contacts WHERE email=$1 AND company_id IS NOT NULL LIMIT 1', [email]);
