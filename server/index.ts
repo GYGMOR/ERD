@@ -4782,38 +4782,6 @@ async function createInvoicesFromProposal(proposal: any, contractId: string): Pr
 }
 
 // Cron: generate recurring invoices when due
-async function generateRecurringInvoices() {
-  try {
-    const contracts = await pool.query(
-      `SELECT * FROM contracts WHERE next_invoice_date <= CURRENT_DATE AND status = 'active'`
-    );
-    for (const contract of contracts.rows) {
-      const lastInv = await pool.query(
-        `SELECT * FROM invoices WHERE contract_id = $1 AND billing_interval != 'one_time' ORDER BY created_at DESC LIMIT 1`,
-        [contract.id]
-      );
-      if (!lastInv.rows[0]) continue;
-      const src = lastInv.rows[0];
-      const invNum = `RE-${new Date().getFullYear()}-${Math.floor(Math.random() * 90000 + 10000)}`;
-      const dueDate = new Date(); dueDate.setDate(dueDate.getDate() + 30);
-      await pool.query(
-        `INSERT INTO invoices (tenant_id, company_id, invoice_number, title, amount, status, issue_date, due_date, contract_id, proposal_id, billing_interval, is_recurring, items, tax_rate)
-         VALUES ($1,$2,$3,$4,$5,'sent',NOW(),$6,$7,$8,$9,$10,$11,$12)`,
-        [src.tenant_id, src.company_id, invNum, src.title, src.amount, dueDate,
-         src.contract_id, src.proposal_id, src.billing_interval, true, src.items, src.tax_rate]
-      );
-      // Advance next_invoice_date
-      const next = new Date();
-      if (contract.billing_interval === 'monthly' || src.billing_interval === 'monthly') next.setMonth(next.getMonth() + 1);
-      else if (contract.billing_interval === 'quarterly' || src.billing_interval === 'quarterly') next.setMonth(next.getMonth() + 3);
-      else if (contract.billing_interval === 'yearly' || src.billing_interval === 'yearly') next.setFullYear(next.getFullYear() + 1);
-      await pool.query(`UPDATE contracts SET next_invoice_date = $1 WHERE id = $2`, [next.toISOString().split('T')[0], contract.id]);
-      console.log(`[Recurring] Created invoice for contract ${contract.id}`);
-    }
-  } catch (err) { console.error('[Recurring invoice cron error]', err); }
-}
-setInterval(generateRecurringInvoices, 24 * 60 * 60 * 1000);
-setTimeout(generateRecurringInvoices, 10000); // run 10s after startup
 
 // GET /api/proposals — admin list
 app.get('/api/proposals', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
