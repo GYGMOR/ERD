@@ -16,7 +16,8 @@ import { Resend } from 'resend';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import Stripe from 'stripe';
-import { SwissQRBill } from 'swissqrbill/svg';
+let SwissQRBill: any = null;
+try { const m = require('swissqrbill/svg'); SwissQRBill = m.SwissQRBill; } catch { console.warn('[SwissQRBill] Package not installed — QR bills disabled'); }
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -5118,6 +5119,7 @@ async function logAudit(tenantId: string | undefined, userId: string | undefined
 
 // ─── QR Bill & Document Generator ─────────────────────────────────────────────
 function generateQRBillSVG(amount: number, creditorIBAN: string, creditorName: string, creditorAddress: string, creditorZip: string, creditorCity: string, debtorName: string, debtorAddress: string, debtorZip: string, debtorCity: string): string {
+  if (!SwissQRBill) return '';
   try {
     const data: any = {
       currency: 'CHF',
