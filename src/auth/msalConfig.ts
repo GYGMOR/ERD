@@ -5,9 +5,8 @@ const redirectUri = window.location.origin + "/";
 
 export const msalConfig: Configuration = {
     auth: {
-        // Will be populated from .env 
-        clientId: import.meta.env.VITE_MSAL_CLIENT_ID || "deine-client-id-hier",
-        authority: `https://login.microsoftonline.com/${import.meta.env.VITE_MSAL_TENANT_ID || "deine-tenant-id-hier"}`,
+        clientId: "eb95bf20-1f7d-499f-9fbe-8ba19df143a1",
+        authority: "https://login.microsoftonline.com/a2dc3403-2722-4330-a6fb-a64d592d68ff",
         redirectUri: redirectUri,
         postLogoutRedirectUri: redirectUri
     },
