@@ -1,0 +1,3 @@
+[submodule "hed-it-web"]
+	path = hed-it-web
+	url = https://github.com/GYGMOR/hed-it-web.git
