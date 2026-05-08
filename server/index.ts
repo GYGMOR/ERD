@@ -3722,26 +3722,21 @@ app.get('/api/portal/contracts/:id/pdf', authenticateToken, async (req: Authenti
           item.description || '',
           (item.quantity || 1).toString(),
           `CHF ${parseFloat(item.unit_price || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}`,
-          `${parseFloat(item.tax_rate || 8.1).toFixed(1)}%`,
           `CHF ${parseFloat(item.total_price || 0).toLocaleString('de-CH', { minimumFractionDigits: 2 })}`,
         ])
-      : [['Gemäss Vertrag', '', '1', `CHF ${parseFloat(contract.amount).toFixed(2)}`, '8.1%', `CHF ${parseFloat(contract.amount).toFixed(2)}`]];
+      : [['Gemäss Vertrag', '', '1', `CHF ${parseFloat(contract.amount).toFixed(2)}`, `CHF ${parseFloat(contract.amount).toFixed(2)}`]];
 
     const subtotal = items.reduce((s: number, i: any) => s + (parseFloat(i.total_price) || 0), 0) || parseFloat(contract.amount);
-    const tax = items.reduce((s: number, i: any) => s + ((parseFloat(i.total_price) || 0) * ((parseFloat(i.tax_rate) || 8.1) / 100)), 0);
     const discountAmt = subtotal * ((contract.discount_percent || 0) / 100);
-    const total = subtotal - discountAmt + tax;
+    const total = subtotal - discountAmt;
 
-    const footRows: any[] = [
-      ['', '', '', '', 'Zwischensumme:', `CHF ${subtotal.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`],
-    ];
-    if (discountAmt > 0) footRows.push(['', '', '', '', `Rabatt (${contract.discount_percent}%):`, `-CHF ${discountAmt.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
-    footRows.push(['', '', '', '', 'MwSt (8.1%):', `CHF ${tax.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
-    footRows.push(['', '', '', '', 'GESAMTBETRAG:', `CHF ${total.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
+    const footRows: any[] = [];
+    if (discountAmt > 0) footRows.push(['', '', '', `Rabatt (${contract.discount_percent}%):`, `-CHF ${discountAmt.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
+    footRows.push(['', '', '', 'GESAMTBETRAG:', `CHF ${total.toLocaleString('de-CH', { minimumFractionDigits: 2 })}`]);
 
     autoTable(doc as any, {
       startY: afterDetails + 4,
-      head: [['Position', 'Beschreibung', 'Menge', 'Einzelpreis', 'MwSt', 'Total']],
+      head: [['Position', 'Beschreibung', 'Menge', 'Einzelpreis', 'Total']],
       body: tableRows,
       foot: footRows,
       theme: 'striped',
