@@ -3,6 +3,12 @@ FROM node:24-slim AS builder
 
 WORKDIR /app
 
+# Build-time args for Vite (VITE_* variables are baked in at compile time)
+ARG VITE_MSAL_CLIENT_ID
+ARG VITE_MSAL_TENANT_ID
+ENV VITE_MSAL_CLIENT_ID=$VITE_MSAL_CLIENT_ID
+ENV VITE_MSAL_TENANT_ID=$VITE_MSAL_TENANT_ID
+
 COPY package*.json ./
 RUN npm install
 
