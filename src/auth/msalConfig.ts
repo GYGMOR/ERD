@@ -47,5 +47,6 @@ export const msalConfig: Configuration = {
  */
 export const loginRequest = {
     scopes: ["User.Read"],
-    prompt: "select_account"
+    // "login" forces full credential re-entry every time — no SSO bypass after logout
+    prompt: "login"
 };
