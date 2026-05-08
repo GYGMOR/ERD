@@ -731,6 +731,20 @@ app.post('/api/auth/reset-password', async (req: express.Request, res: express.R
 
 // --- USERS MANAGEMENT ---
 
+app.get('/api/users/me', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
+  try {
+    const { id } = req.user!;
+    const result = await pool.query(
+      'SELECT id, email, first_name, last_name, role, two_factor_enabled FROM users WHERE id = $1',
+      [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'User not found' });
+    res.json({ success: true, user: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 app.get('/api/users', authenticateToken, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const { tenant_id } = req.user!;
